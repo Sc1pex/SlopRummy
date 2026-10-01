@@ -6,9 +6,9 @@ defmodule Remybun.Engine.RulesViewTest do
   describe "rules" do
     test "builds a preset with JSON overrides" do
       assert {:ok, r} =
-               Rules.build("classic", %{"opening_min_points" => 51, "discard_pickup" => "free"})
+               Rules.build("classic", %{"opening_min_points" => 51, "joker_swap" => false})
 
-      assert r.opening_min_points == 51 and r.discard_pickup == :free
+      assert r.opening_min_points == 51 and r.joker_swap == false
 
       assert {:ok, %Rules{match: :single}} =
                Rules.build("classic", %{"match" => %{"type" => "single"}})
@@ -18,11 +18,16 @@ defmodule Remybun.Engine.RulesViewTest do
       assert {:error, :unknown_preset} = Rules.build("nope")
       assert {:error, {:invalid_rule, "bogus"}} = Rules.build("classic", %{"bogus" => 1})
 
-      assert {:error, {:invalid_rule, "discard_pickup"}} =
-               Rules.build("classic", %{"discard_pickup" => "maybe"})
+      assert {:error, {:invalid_rule, "joker_swap"}} =
+               Rules.build("classic", %{"joker_swap" => "maybe"})
 
       assert {:error, {:invalid_rule, "max_players"}} =
                Rules.build("classic", %{"max_players" => 1})
+    end
+
+    test "ignores settings removed since a snapshot was stored" do
+      old = %{"discard_pickup" => "must_use", "atu" => "off", "opening_min_points" => 51}
+      assert {:ok, %Rules{opening_min_points: 51}} = Rules.from_map(old)
     end
 
     test "round-trips through a JSON map" do

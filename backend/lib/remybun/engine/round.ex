@@ -1,19 +1,44 @@
 defmodule Remybun.Engine.Round do
   @moduledoc """
-  State machine for a single deal.
+  State machine for a single deal of Remi etalat.
 
-  Phases: `:awaiting_draw` → `:awaiting_discard` → (next seat) … → `:finished`.
-  The starting seat is dealt one extra card and begins in `:awaiting_discard`.
+  ## Deal
+  The starting seat gets 15 tiles, the others 14. The next tile of the stock is the
+  **atu**: it is taken out of play and shown. A player dealt the atu's twin gets a bonus;
+  an atu that is a 1 or a joker doubles every score of the round.
 
-  Actions (`play/3`):
+  ## Phases
+    * `:exchange` — before the first discard, players may swap duplicates (see below)
+      and a player dealt 3+ duplicate pairs may refuse the deal (`:refused`).
+    * `:awaiting_draw` → `:awaiting_discard` → next seat … → `:finished`.
+      The starting seat begins in `:awaiting_discard`.
 
-    * `:draw_stock`
-    * `:take_discard`
-    * `:return_discard` — undo `:take_discard` before doing anything else that turn
-    * `{:lay_down, [[card_id]]}`
-    * `{:add_to_meld, meld_id, [card_id]}`
-    * `{:swap_joker, meld_id, card_id}`
-    * `{:discard, card_id}`
+  ## Actions (`play/3`)
+  Exchange phase (any seat): `{:offer_duplicate, tile_id}`, `{:withdraw_offer, offer_id}`,
+  `{:respond_offer, offer_id, tile_id}`, `{:withdraw_response, offer_id}`,
+  `{:accept_response, offer_id, seat}`, `:exchange_done`, `:refuse_deal`.
+
+  Turns: `:draw_stock`, `{:take_discard, tile_id, melds, additions}`,
+  `{:lay_down, [[tile_id]]}`, `{:add_to_meld, meld_id, [tile_id]}`,
+  `{:swap_joker, meld_id, tile_id}`, `{:discard, tile_id}`.
+
+  ## Discard pile
+  A row in the order tiles were discarded. The starting player's first discard can never
+  be taken. A player who hasn't opened may take only the last tile; a player who has
+  opened may take any tile and gets every tile after it too. The chosen tile must be used
+  in the same action (`take_discard` carries the melds/additions it goes into).
+
+  ## Restrictions
+  No melding (laying down, adding, swapping jokers, taking a discard) on a player's first
+  turn. On the turn a player opens they may not add to melds already on the table.
+  An opening needs `opening_min_points` with at least one run and one set, unless it
+  includes a set of 1s.
+
+  ## Scoring
+  Per player: points of the tiles they laid (jokers as the tile they stand for) minus the
+  tiles left in hand (jokers 50), plus the closing bonus and the atu bonus. Then closing
+  with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
+  If the stock runs out the round ends and nobody gets the closing bonus.
 
   Every action returns `{:ok, round, events}` or `{:error, reason}`. Events are
   JSON-friendly maps that are safe to show to every player.
@@ -28,130 +53,135 @@ defmodule Remybun.Engine.Round do
     :current,
     :phase,
     :result,
+    :atu,
+    :blocked_discard,
     hands: %{},
     stock: [],
+    # Oldest first; the last element is the top.
     discard: [],
     melds: [],
     opened: %{},
+    turns_taken: %{},
+    laid_by: %{},
+    atu_holders: [],
+    multiplier: 1,
     next_meld_id: 1,
-    turn: %{taken_discard: nil, pending_joker: nil, acted: false}
+    exchange: nil,
+    turn: %{pending_joker: nil, opened_now: false}
   ]
 
   @type t :: %__MODULE__{}
-  @type seat :: non_neg_integer()
 
-  @new_turn %{taken_discard: nil, pending_joker: nil, acted: false}
+  @new_turn %{pending_joker: nil, opened_now: false}
 
   @doc "Deals a new round from `deck` (already shuffled)."
   def new(%Rules{} = rules, seats, starting_seat, deck) when starting_seat in 0..(seats - 1)//1 do
     order = Enum.map(0..(seats - 1), &rem(starting_seat + &1, seats))
 
-    {hands, stock} =
+    {hands, [atu | stock]} =
       Enum.reduce(order, {%{}, deck}, fn seat, {hands, deck} ->
-        count = if seat == starting_seat, do: rules.hand_size + 1, else: rules.hand_size
+        count = if seat == starting_seat, do: Rules.hand_size() + 1, else: Rules.hand_size()
         {hand, rest} = Enum.split(deck, count)
         {Map.put(hands, seat, hand), rest}
       end)
+
+    holders = for {seat, hand} <- hands, Enum.any?(hand, &Card.twin?(&1, atu)), do: seat
+    seat_map = fn value -> Map.new(0..(seats - 1), &{&1, value}) end
 
     %__MODULE__{
       rules: rules,
       seats: seats,
       starting_seat: starting_seat,
       current: starting_seat,
-      phase: :awaiting_discard,
+      phase: :exchange,
       hands: hands,
       stock: stock,
-      opened: Map.new(0..(seats - 1), &{&1, false})
+      atu: atu,
+      atu_holders: Enum.sort(holders),
+      multiplier: if(atu.rank in [nil, 1], do: 2, else: 1),
+      opened: seat_map.(false),
+      turns_taken: seat_map.(0),
+      exchange: %{
+        offers: %{},
+        next_offer_id: 1,
+        done: MapSet.new(),
+        can_refuse:
+          for({seat, hand} <- hands, duplicate_pairs(hand) >= 3, do: seat) |> Enum.sort()
+      }
     }
   end
 
-  def play(%__MODULE__{phase: :finished}, _seat, _action), do: {:error, :round_finished}
+  @doc "Number of duplicate pairs (two identical tiles) in a hand."
+  def duplicate_pairs(hand) do
+    hand |> Enum.frequencies_by(&{&1.rank, &1.color}) |> Enum.count(fn {_, n} -> n >= 2 end)
+  end
+
+  ## ---- Exchange phase ----
+
+  def play(%__MODULE__{phase: :exchange} = r, seat, action) when is_integer(seat) do
+    if seat in 0..(r.seats - 1), do: exchange(r, seat, action), else: {:error, :not_a_player}
+  end
+
+  def play(%__MODULE__{phase: phase}, _seat, _action) when phase in [:finished, :refused],
+    do: {:error, :round_finished}
 
   def play(%__MODULE__{current: current}, seat, _action) when seat != current,
     do: {:error, :not_your_turn}
 
+  ## ---- Turns ----
+
   def play(%__MODULE__{phase: :awaiting_draw} = r, seat, :draw_stock), do: draw_stock(r, seat)
 
-  def play(%__MODULE__{phase: :awaiting_draw, discard: []}, _seat, :take_discard),
-    do: {:error, :discard_empty}
+  def play(
+        %__MODULE__{phase: :awaiting_draw} = r,
+        seat,
+        {:take_discard, tile_id, melds, additions}
+      )
+      when is_list(melds) and is_list(additions) do
+    with :ok <- check_not_first_turn(r, seat),
+         {:ok, index} <- discard_index(r, seat, tile_id) do
+      {kept, taken} = Enum.split(r.discard, index)
+      opened_before = r.opened[seat]
 
-  def play(%__MODULE__{phase: :awaiting_draw, discard: [top | rest]} = r, seat, :take_discard) do
-    taken = if r.rules.discard_pickup == :must_use, do: top.id
-
-    r = %{
-      r
-      | discard: rest,
-        hands: Map.update!(r.hands, seat, &(&1 ++ [top])),
-        phase: :awaiting_discard,
-        turn: %{@new_turn | taken_discard: taken}
-    }
-
-    {:ok, r, [%{type: :took_discard, seat: seat, card: Card.to_map(top)}]}
-  end
-
-  def play(%__MODULE__{phase: :awaiting_discard} = r, seat, :return_discard) do
-    with id when is_integer(id) <- r.turn.taken_discard || {:error, :nothing_to_return},
-         :ok <- if(r.turn.acted, do: {:error, :already_acted}, else: :ok),
-         {:ok, card, hand} <- take_from_hand(r.hands[seat], id) do
       r = %{
         r
-        | discard: [card | r.discard],
-          hands: Map.put(r.hands, seat, hand),
-          phase: :awaiting_draw,
+        | discard: kept,
+          hands: Map.update!(r.hands, seat, &(&1 ++ taken)),
+          phase: :awaiting_discard,
           turn: @new_turn
       }
 
-      {:ok, r, [%{type: :returned_discard, seat: seat, card: Card.to_map(card)}]}
+      event = %{
+        type: :took_discard,
+        seat: seat,
+        card: Card.to_map(hd(taken)),
+        count: length(taken)
+      }
+
+      with :ok <- if(melds == [] and additions == [], do: {:error, :must_use_discard}, else: :ok),
+           :ok <- if(additions != [] and not opened_before, do: {:error, :not_opened}, else: :ok),
+           {:ok, r, e1} <- if(melds == [], do: {:ok, r, []}, else: lay_down(r, seat, melds)),
+           {:ok, r, e2} <- apply_additions(r, seat, additions),
+           :ok <- if(in_hand?(r.hands[seat], tile_id), do: {:error, :must_use_discard}, else: :ok) do
+        {:ok, r, [event | e1 ++ e2]}
+      end
     end
   end
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:lay_down, groups})
       when is_list(groups) do
-    with true <- groups != [] || {:error, :invalid_meld},
-         {:ok, groups, hand} <- take_groups(r.hands[seat], groups),
-         {:ok, melds} <- build_melds(groups, r.rules.max_jokers_per_meld),
-         :ok <- check_opening(r, seat, melds),
-         :ok <- check_hand_left(hand) do
-      {melds, next_id} =
-        Enum.map_reduce(melds, r.next_meld_id, fn m, id ->
-          {%{m | id: id, owner: seat}, id + 1}
-        end)
-
-      r = %{
-        r
-        | hands: Map.put(r.hands, seat, hand),
-          melds: r.melds ++ melds,
-          next_meld_id: next_id,
-          opened: Map.put(r.opened, seat, true),
-          turn: %{r.turn | acted: true}
-      }
-
-      {:ok, r, [%{type: :laid_down, seat: seat, melds: Enum.map(melds, &Meld.to_map/1)}]}
-    end
+    with :ok <- check_not_first_turn(r, seat), do: lay_down(r, seat, groups)
   end
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:add_to_meld, meld_id, ids})
       when is_list(ids) do
-    with :ok <- check_can_lay_off(r, seat),
-         {:ok, meld} <- find_meld(r, meld_id),
-         {:ok, [cards], hand} <- take_groups(r.hands[seat], [ids]),
-         true <- cards != [] || {:error, :invalid_meld},
-         {:ok, meld} <- Meld.add(meld, cards, r.rules.max_jokers_per_meld),
-         :ok <- check_hand_left(hand) do
-      r = %{
-        r
-        | hands: Map.put(r.hands, seat, hand),
-          melds: replace_meld(r.melds, meld),
-          turn: %{r.turn | acted: true}
-      }
-
-      {:ok, r, [%{type: :added_to_meld, seat: seat, meld: Meld.to_map(meld)}]}
-    end
+    with :ok <- check_not_first_turn(r, seat), do: apply_additions(r, seat, [{meld_id, ids}])
   end
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:swap_joker, meld_id, card_id}) do
-    with true <- r.rules.joker_swap || {:error, :joker_swap_disabled},
-         true <- r.opened[seat] || {:error, :not_opened},
+    with :ok <- check_not_first_turn(r, seat),
+         :ok <- check_can_touch_table(r, seat),
+         true <- r.rules.joker_swap || {:error, :joker_swap_disabled},
          {:ok, meld} <- find_meld(r, meld_id),
          {:ok, card, hand} <- take_from_hand(r.hands[seat], card_id),
          {:ok, meld, joker} <- Meld.swap_joker(meld, card) do
@@ -159,7 +189,8 @@ defmodule Remybun.Engine.Round do
         r
         | hands: Map.put(r.hands, seat, hand ++ [joker]),
           melds: replace_meld(r.melds, meld),
-          turn: %{r.turn | acted: true, pending_joker: joker.id}
+          laid_by: r.laid_by |> Map.put(card.id, seat) |> Map.delete(joker.id),
+          turn: %{r.turn | pending_joker: joker.id}
       }
 
       {:ok, r, [%{type: :swapped_joker, seat: seat, meld: Meld.to_map(meld)}]}
@@ -167,28 +198,28 @@ defmodule Remybun.Engine.Round do
   end
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:discard, card_id}) do
-    hand = r.hands[seat]
-
-    cond do
-      in_hand?(hand, r.turn.taken_discard) -> {:error, :must_use_discard}
-      in_hand?(hand, r.turn.pending_joker) -> {:error, :must_use_joker}
-      true -> do_discard(r, seat, card_id)
-    end
+    if in_hand?(r.hands[seat], r.turn.pending_joker),
+      do: {:error, :must_use_joker},
+      else: do_discard(r, seat, card_id)
   end
 
   def play(%__MODULE__{}, _seat, action)
-      when action in [:draw_stock, :take_discard, :return_discard] or
+      when action in [:draw_stock, :exchange_done, :refuse_deal] or
              (is_tuple(action) and
-                elem(action, 0) in [:lay_down, :add_to_meld, :swap_joker, :discard]),
+                elem(action, 0) in [:take_discard, :lay_down, :add_to_meld, :swap_joker, :discard]),
       do: {:error, :wrong_phase}
 
   def play(%__MODULE__{}, _seat, _action), do: {:error, :invalid_action}
 
   @doc """
-  Plays the current seat's turn automatically (turn timeout / disconnected player):
-  draws from the stock and discards, ignoring the pickup and joker obligations if needed.
+  Plays automatically on a timeout: ends the exchange phase, or draws from the stock and
+  discards the highest tile (ignoring a pending joker obligation).
   """
-  def auto_play(%__MODULE__{phase: :finished} = r), do: {:ok, r, []}
+  def auto_play(%__MODULE__{phase: phase} = r) when phase in [:finished, :refused],
+    do: {:ok, r, []}
+
+  def auto_play(%__MODULE__{phase: :exchange} = r),
+    do: {:ok, end_exchange(r), [%{type: :exchange_finished}]}
 
   def auto_play(%__MODULE__{phase: :awaiting_draw, current: seat} = r) do
     with {:ok, r, events} <- draw_stock(r, seat),
@@ -197,47 +228,182 @@ defmodule Remybun.Engine.Round do
     end
   end
 
-  def auto_play(%__MODULE__{phase: :awaiting_discard, current: seat, turn: turn} = r) do
+  def auto_play(%__MODULE__{phase: :awaiting_discard, current: seat} = r) do
     hand = r.hands[seat]
 
-    if in_hand?(hand, turn.taken_discard) and not turn.acted do
-      {:ok, r, events} = play(r, seat, :return_discard)
-      {:ok, r, more} = auto_play(r)
-      {:ok, r, events ++ more}
-    else
-      card =
-        Enum.find(hand, &(&1.id == turn.taken_discard)) ||
-          hand
-          |> Enum.reject(&Card.joker?/1)
-          |> Enum.max_by(&Card.hand_value(&1, 0), fn -> nil end) ||
-          hd(hand)
+    card =
+      hand |> Enum.reject(&Card.joker?/1) |> Enum.max_by(&Card.hand_value(&1, 0), fn -> nil end) ||
+        hd(hand)
 
-      do_discard(r, seat, card.id)
+    do_discard(r, seat, card.id)
+  end
+
+  ## ---- Exchange internals ----
+
+  defp exchange(r, seat, {:offer_duplicate, tile_id}) do
+    with :ok <- check_not_done(r, seat),
+         {:ok, tile} <- duplicate_tile(r, seat, tile_id),
+         :ok <- check_uncommitted(r, seat, tile) do
+      id = r.exchange.next_offer_id
+      offer = %{id: id, seat: seat, tile: tile, tier: Card.tier(tile), responses: %{}}
+
+      r =
+        put_exchange(r, %{
+          r.exchange
+          | offers: Map.put(r.exchange.offers, id, offer),
+            next_offer_id: id + 1
+        })
+
+      {:ok, r, [%{type: :duplicate_offered, seat: seat, offer_id: id, tier: offer.tier}]}
     end
   end
 
-  @doc "Penalty points of a seat's hand at the end of the round (before multipliers)."
-  def hand_penalty(%__MODULE__{} = r, seat) do
-    if r.opened[seat] do
-      r.hands[seat] |> Enum.map(&Card.hand_value(&1, r.rules.joker_penalty)) |> Enum.sum()
-    else
-      r.rules.not_opened_penalty
-    end
-  end
-
-  ## Internals
-
-  defp draw_stock(%__MODULE__{stock: []} = r, seat) do
-    case {r.rules.stock_exhausted, r.discard} do
-      {:reshuffle, [top | rest]} when rest != [] ->
-        r = %{r | stock: Enum.shuffle(rest), discard: [top]}
-        {:ok, r, events} = draw_stock(r, seat)
-        {:ok, r, [%{type: :stock_reshuffled} | events]}
+  defp exchange(r, seat, {:withdraw_offer, offer_id}) do
+    case r.exchange.offers[offer_id] do
+      %{seat: ^seat} ->
+        r = put_exchange(r, %{r.exchange | offers: Map.delete(r.exchange.offers, offer_id)})
+        {:ok, r, [%{type: :offer_withdrawn, seat: seat, offer_id: offer_id}]}
 
       _ ->
-        r = finish(r, nil, false)
-        {:ok, r, [%{type: :round_finished, result: r.result}]}
+        {:error, :offer_not_found}
     end
+  end
+
+  defp exchange(r, seat, {:respond_offer, offer_id, tile_id}) do
+    with :ok <- check_not_done(r, seat),
+         {:ok, offer} <- find_offer(r, offer_id),
+         true <- offer.seat != seat || {:error, :own_offer},
+         {:ok, tile} <- duplicate_tile(r, seat, tile_id),
+         :ok <- check_uncommitted(r, seat, tile, offer_id) do
+      offer = put_in(offer.responses[seat], tile)
+      r = put_in(r.exchange.offers[offer_id], offer)
+      {:ok, r, [%{type: :offer_answered, seat: seat, offer_id: offer_id, tier: Card.tier(tile)}]}
+    end
+  end
+
+  defp exchange(r, seat, {:withdraw_response, offer_id}) do
+    with {:ok, offer} <- find_offer(r, offer_id),
+         true <- Map.has_key?(offer.responses, seat) || {:error, :response_not_found} do
+      r = put_in(r.exchange.offers[offer_id].responses, Map.delete(offer.responses, seat))
+      {:ok, r, [%{type: :response_withdrawn, seat: seat, offer_id: offer_id}]}
+    end
+  end
+
+  defp exchange(r, seat, {:accept_response, offer_id, from_seat}) do
+    with {:ok, %{seat: ^seat} = offer} <- find_offer(r, offer_id),
+         %Card{} = received <- offer.responses[from_seat] || {:error, :response_not_found} do
+      given = offer.tile
+
+      hands =
+        r.hands
+        |> Map.update!(seat, &(Enum.reject(&1, fn t -> t.id == given.id end) ++ [received]))
+        |> Map.update!(from_seat, &(Enum.reject(&1, fn t -> t.id == received.id end) ++ [given]))
+
+      r = %{r | hands: hands}
+      offers = r.exchange.offers |> Map.delete(offer_id) |> prune_offers(r)
+      r = put_exchange(r, %{r.exchange | offers: offers})
+
+      {:ok, r,
+       [
+         %{
+           type: :duplicates_swapped,
+           seats: [seat, from_seat],
+           tiers: [offer.tier, Card.tier(received)]
+         }
+       ]}
+    else
+      {:ok, _} -> {:error, :offer_not_found}
+      error -> error
+    end
+  end
+
+  defp exchange(r, seat, :exchange_done) do
+    r = put_exchange(r, %{r.exchange | done: MapSet.put(r.exchange.done, seat)})
+
+    if MapSet.size(r.exchange.done) == r.seats do
+      {:ok, end_exchange(r), [%{type: :exchange_finished}]}
+    else
+      {:ok, r, [%{type: :exchange_ready, seat: seat}]}
+    end
+  end
+
+  defp exchange(r, seat, :refuse_deal) do
+    if seat in r.exchange.can_refuse do
+      {:ok, %{r | phase: :refused}, [%{type: :deal_refused, seat: seat}]}
+    else
+      {:error, :cannot_refuse}
+    end
+  end
+
+  defp exchange(_r, _seat, _action), do: {:error, :wrong_phase}
+
+  defp end_exchange(r), do: %{r | phase: :awaiting_discard, exchange: nil}
+
+  defp put_exchange(r, exchange), do: %{r | exchange: exchange}
+
+  defp check_not_done(r, seat) do
+    if MapSet.member?(r.exchange.done, seat), do: {:error, :exchange_done}, else: :ok
+  end
+
+  defp duplicate_tile(r, seat, tile_id) do
+    hand = r.hands[seat]
+
+    case Enum.find(hand, &(&1.id == tile_id)) do
+      nil ->
+        {:error, :card_not_in_hand}
+
+      tile ->
+        if Enum.any?(hand, &Card.twin?(&1, tile)),
+          do: {:ok, tile},
+          else: {:error, :not_a_duplicate}
+    end
+  end
+
+  # A pair may back only one offer or response at a time.
+  defp check_uncommitted(r, seat, tile, replacing_offer \\ nil) do
+    committed =
+      Enum.flat_map(r.exchange.offers, fn {id, offer} ->
+        own = if offer.seat == seat, do: [offer.tile], else: []
+
+        response =
+          if id != replacing_offer and offer.responses[seat],
+            do: [offer.responses[seat]],
+            else: []
+
+        own ++ response
+      end)
+
+    if Enum.any?(committed, &(&1.id == tile.id or Card.twin?(&1, tile))),
+      do: {:error, :duplicate_already_offered},
+      else: :ok
+  end
+
+  defp find_offer(r, id) do
+    case r.exchange.offers[id] do
+      nil -> {:error, :offer_not_found}
+      offer -> {:ok, offer}
+    end
+  end
+
+  # After a swap, drop offers and responses whose tile is no longer a duplicate in hand.
+  defp prune_offers(offers, r) do
+    still_duplicate? = fn seat, tile ->
+      hand = r.hands[seat]
+      in_hand?(hand, tile.id) and Enum.any?(hand, &Card.twin?(&1, tile))
+    end
+
+    offers
+    |> Enum.filter(fn {_, o} -> still_duplicate?.(o.seat, o.tile) end)
+    |> Map.new(fn {id, o} ->
+      {id, %{o | responses: Map.filter(o.responses, fn {s, t} -> still_duplicate?.(s, t) end)}}
+    end)
+  end
+
+  ## ---- Turn internals ----
+
+  defp draw_stock(%__MODULE__{stock: []} = r, _seat) do
+    r = finish(r, nil, false)
+    {:ok, r, [%{type: :round_finished, result: r.result}]}
   end
 
   defp draw_stock(%__MODULE__{stock: [card | rest]} = r, seat) do
@@ -252,9 +418,92 @@ defmodule Remybun.Engine.Round do
     {:ok, r, [%{type: :drew_stock, seat: seat}]}
   end
 
+  defp discard_index(r, seat, tile_id) do
+    index = Enum.find_index(r.discard, &(&1.id == tile_id))
+    last = length(r.discard) - 1
+
+    cond do
+      index == nil -> {:error, :card_not_found}
+      tile_id == r.blocked_discard -> {:error, :discard_blocked}
+      index != last and not r.opened[seat] -> {:error, :only_last_discard}
+      true -> {:ok, index}
+    end
+  end
+
+  defp lay_down(r, seat, groups) do
+    with true <- groups != [] || {:error, :invalid_meld},
+         {:ok, groups, hand} <- take_groups(r.hands[seat], groups),
+         {:ok, melds} <- build_melds(groups, r.rules.max_jokers_per_meld),
+         :ok <- check_opening(r, seat, melds),
+         :ok <- check_hand_left(hand) do
+      {melds, next_id} =
+        Enum.map_reduce(melds, r.next_meld_id, fn m, id ->
+          {%{m | id: id, owner: seat}, id + 1}
+        end)
+
+      laid_by = for(m <- melds, c <- m.cards, into: r.laid_by, do: {c.id, seat})
+      opening? = not r.opened[seat]
+
+      r = %{
+        r
+        | hands: Map.put(r.hands, seat, hand),
+          melds: r.melds ++ melds,
+          next_meld_id: next_id,
+          laid_by: laid_by,
+          opened: Map.put(r.opened, seat, true),
+          turn: %{r.turn | opened_now: r.turn.opened_now or opening?}
+      }
+
+      {:ok, r, [%{type: :laid_down, seat: seat, melds: Enum.map(melds, &Meld.to_map/1)}]}
+    end
+  end
+
+  defp apply_additions(r, _seat, []), do: {:ok, r, []}
+
+  defp apply_additions(r, seat, additions) do
+    with :ok <- check_can_touch_table(r, seat) do
+      Enum.reduce_while(additions, {:ok, r, []}, fn
+        {meld_id, ids}, {:ok, r, events} when is_list(ids) ->
+          case add_to_meld(r, seat, meld_id, ids) do
+            {:ok, r, more} -> {:cont, {:ok, r, events ++ more}}
+            error -> {:halt, error}
+          end
+
+        _, _ ->
+          {:halt, {:error, :invalid_action}}
+      end)
+    end
+  end
+
+  defp add_to_meld(r, seat, meld_id, ids) do
+    with {:ok, meld} <- find_meld(r, meld_id),
+         {:ok, [cards], hand} <- take_groups(r.hands[seat], [ids]),
+         true <- cards != [] || {:error, :invalid_meld},
+         {:ok, meld} <- Meld.add(meld, cards, r.rules.max_jokers_per_meld),
+         :ok <- check_hand_left(hand) do
+      r = %{
+        r
+        | hands: Map.put(r.hands, seat, hand),
+          melds: replace_meld(r.melds, meld),
+          laid_by: for(c <- cards, into: r.laid_by, do: {c.id, seat})
+      }
+
+      {:ok, r, [%{type: :added_to_meld, seat: seat, meld: Meld.to_map(meld)}]}
+    end
+  end
+
   defp do_discard(r, seat, card_id) do
     with {:ok, card, hand} <- take_from_hand(r.hands[seat], card_id) do
-      r = %{r | hands: Map.put(r.hands, seat, hand), discard: [card | r.discard]}
+      first_discard? = r.discard == [] and r.blocked_discard == nil
+
+      r = %{
+        r
+        | hands: Map.put(r.hands, seat, hand),
+          discard: r.discard ++ [card],
+          blocked_discard: if(first_discard?, do: card.id, else: r.blocked_discard),
+          turns_taken: Map.update!(r.turns_taken, seat, &(&1 + 1))
+      }
+
       event = %{type: :discarded, seat: seat, card: Card.to_map(card)}
 
       if hand == [] do
@@ -268,40 +517,80 @@ defmodule Remybun.Engine.Round do
     end
   end
 
-  defp finish(r, winner, joker_close) do
-    multiplier = if joker_close, do: r.rules.joker_close_multiplier, else: 1
+  defp finish(r, closer, joker_close) do
+    laid =
+      for meld <- r.melds, {card, value} <- Meld.tile_values(meld), reduce: %{} do
+        acc -> Map.update(acc, r.laid_by[card.id], value, &(&1 + value))
+      end
 
-    scores =
-      Map.new(0..(r.seats - 1), fn
-        ^winner -> {winner, 0}
-        seat -> {seat, hand_penalty(r, seat) * multiplier}
+    breakdown =
+      Map.new(0..(r.seats - 1), fn seat ->
+        laid_points = Map.get(laid, seat, 0)
+
+        hand_points =
+          r.hands[seat] |> Enum.map(&Card.hand_value(&1, Rules.joker_penalty())) |> Enum.sum()
+
+        closing = if seat == closer, do: Rules.closing_bonus(), else: 0
+        atu = if seat in r.atu_holders, do: Rules.atu_bonus(), else: 0
+        sum = laid_points - hand_points + closing + atu
+        multiplier = r.multiplier * if(seat == closer and joker_close, do: 2, else: 1)
+
+        {seat,
+         %{
+           laid: laid_points,
+           hand: hand_points,
+           closing: closing,
+           atu: atu,
+           multiplier: multiplier,
+           total: sum * multiplier
+         }}
       end)
 
     result = %{
-      winner: winner,
+      winner: closer,
       joker_close: joker_close,
-      scores: scores,
+      atu_multiplier: r.multiplier,
+      scores: Map.new(breakdown, fn {seat, b} -> {seat, b.total} end),
+      breakdown: breakdown,
       hands: Map.new(r.hands, fn {seat, hand} -> {seat, Enum.map(hand, &Card.to_map/1)} end)
     }
 
     %{r | phase: :finished, result: result}
   end
 
+  ## ---- Checks ----
+
+  defp check_not_first_turn(r, seat) do
+    if r.turns_taken[seat] == 0, do: {:error, :first_turn}, else: :ok
+  end
+
+  # Adding to or swapping in table melds needs an opened player, and not on the opening turn.
+  defp check_can_touch_table(r, seat) do
+    cond do
+      not r.opened[seat] -> {:error, :not_opened}
+      r.turn.opened_now -> {:error, :opening_turn}
+      true -> :ok
+    end
+  end
+
   defp check_opening(r, seat, melds) do
     points = melds |> Enum.map(&Meld.points/1) |> Enum.sum()
+    has = fn type -> Enum.any?(melds, &(&1.type == type)) end
 
-    if r.opened[seat] or points >= r.rules.opening_min_points,
-      do: :ok,
-      else: {:error, :opening_too_low}
+    cond do
+      r.opened[seat] -> :ok
+      Enum.any?(melds, &(&1.type == :set and &1.rank == 1)) -> :ok
+      points < r.rules.opening_min_points -> {:error, :opening_too_low}
+      not (has.(:run) and has.(:set)) -> {:error, :opening_needs_run_and_set}
+      true -> :ok
+    end
   end
 
-  defp check_can_lay_off(r, seat) do
-    if r.opened[seat] or r.rules.lay_off_before_opening, do: :ok, else: {:error, :not_opened}
-  end
-
-  # A player must always keep a card to discard; going out happens only by discarding.
+  # A player must always keep a tile to discard; going out happens only by discarding.
   defp check_hand_left([]), do: {:error, :must_keep_card_to_discard}
   defp check_hand_left(_), do: :ok
+
+  ## ---- Helpers ----
 
   defp build_melds(groups, max_jokers) do
     Enum.reduce_while(groups, {:ok, []}, fn cards, {:ok, acc} ->
@@ -312,12 +601,12 @@ defmodule Remybun.Engine.Round do
     end)
   end
 
-  # Removes each group of card ids from the hand. Ids must be distinct and held.
+  # Removes each group of tile ids from the hand. Ids must be distinct and held.
   defp take_groups(hand, groups) do
-    ids = List.flatten(groups)
+    ids = if Enum.all?(groups, &is_list/1), do: List.flatten(groups), else: nil
 
     cond do
-      not Enum.all?(groups, &is_list/1) ->
+      ids == nil ->
         {:error, :invalid_action}
 
       length(Enum.uniq(ids)) != length(ids) ->

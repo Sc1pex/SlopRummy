@@ -2,157 +2,265 @@ defmodule Remybun.Engine.RoundTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Remybun.Engine.{Card, Deck, Match, Round, Rules}
+  alias Remybun.Engine.{Card, Deck, Match, Meld, Round, Rules}
 
   @rules Rules.preset("classic")
 
   defp c(id, rank, color), do: Card.new(id, rank, color)
+  defp j(id), do: Card.joker(id)
+  defp ids(cards), do: Enum.map(cards, & &1.id)
 
-  # A round in the discard phase for seat 0 with the given hands.
+  # A round past the exchange, in seat 0's discard phase, not anyone's first turn.
   defp round_with(hands, opts \\ []) do
     seats = map_size(hands)
+    all = fn v -> Map.new(0..(seats - 1), &{&1, v}) end
 
     %Round{
-      Round.new(@rules, seats, 0, Deck.new())
+      Round.new(@rules, seats, 0, Deck.shuffled())
       | hands: hands,
         stock: Keyword.get(opts, :stock, [c(900, 2, :black), c(901, 3, :black)]),
         discard: Keyword.get(opts, :discard, []),
-        opened: Keyword.get(opts, :opened, Map.new(0..(seats - 1), &{&1, false})),
-        phase: Keyword.get(opts, :phase, :awaiting_discard)
+        blocked_discard: Keyword.get(opts, :blocked, nil),
+        opened: Keyword.get(opts, :opened, all.(false)),
+        turns_taken: Keyword.get(opts, :turns_taken, all.(1)),
+        phase: Keyword.get(opts, :phase, :awaiting_discard),
+        atu: Keyword.get(opts, :atu, c(950, 7, :blue)),
+        atu_holders: Keyword.get(opts, :atu_holders, []),
+        multiplier: Keyword.get(opts, :multiplier, 1),
+        exchange: nil
     }
   end
 
-  defp ids(cards), do: Enum.map(cards, & &1.id)
-
-  test "deals 15 tiles to the starting seat and 14 to the others" do
-    r = Round.new(@rules, 3, 1, Deck.shuffled())
-    assert length(r.hands[1]) == 15
-    assert length(r.hands[0]) == 14 and length(r.hands[2]) == 14
-    assert length(r.stock) == 106 - 43
-    assert r.current == 1 and r.phase == :awaiting_discard
+  # 10-11-12 red (33) + three 5s (15) = 48: a valid opening with a run and a set.
+  defp opening_tiles do
+    run = [c(1, 10, :red), c(2, 11, :red), c(3, 12, :red)]
+    set = [c(4, 5, :black), c(5, 5, :blue), c(6, 5, :yellow)]
+    {run, set}
   end
 
-  test "rejects actions out of turn or in the wrong phase" do
-    r = Round.new(@rules, 2, 0, Deck.shuffled())
-    assert {:error, :not_your_turn} = Round.play(r, 1, :draw_stock)
-    assert {:error, :wrong_phase} = Round.play(r, 0, :draw_stock)
-    assert {:error, :invalid_action} = Round.play(r, 0, :dance)
+  describe "deal" do
+    test "15 tiles to the starting seat, 14 to the others, then the atu" do
+      deck = Deck.shuffled()
+      r = Round.new(@rules, 3, 1, deck)
+      assert length(r.hands[1]) == 15
+      assert length(r.hands[0]) == 14 and length(r.hands[2]) == 14
+      assert r.atu == Enum.at(deck, 43)
+      assert length(r.stock) == 106 - 43 - 1
+      assert r.phase == :exchange
+    end
+
+    test "atu holder and doubling" do
+      # Deck order: seat 0 gets 15, seat 1 gets 14, then the atu.
+      atu = c(200, 1, :red)
+      twin = c(201, 1, :red)
+      filler = for i <- 1..28, do: c(300 + i, rem(i, 12) + 2, Enum.at(Card.colors(), rem(i, 3)))
+      deck = [twin | Enum.take(filler, 14)] ++ Enum.drop(filler, 14) ++ [atu, c(400, 9, :blue)]
+      r = Round.new(@rules, 2, 0, deck)
+      assert r.atu == atu
+      assert r.atu_holders == [0]
+      assert r.multiplier == 2
+    end
   end
 
-  test "normal turn: discard, next player draws" do
-    r = Round.new(@rules, 2, 0, Deck.shuffled())
-    [card | _] = r.hands[0]
+  describe "duplicate exchange" do
+    setup do
+      # seat 0: pair of 5 black (small); seat 1: pair of 11 red (big) and of 1 blue (nail)
+      hands = %{
+        0 => [c(1, 5, :black), c(2, 5, :black), c(3, 9, :red)],
+        1 => [c(11, 11, :red), c(12, 11, :red), c(13, 1, :blue), c(14, 1, :blue)]
+      }
 
-    assert {:ok, r, [%{type: :discarded}, %{type: :turn, seat: 1}]} =
-             Round.play(r, 0, {:discard, card.id})
+      exchange = %{offers: %{}, next_offer_id: 1, done: MapSet.new(), can_refuse: [1]}
+      %{r: %{round_with(hands) | phase: :exchange, exchange: exchange}}
+    end
 
-    assert r.current == 1 and r.phase == :awaiting_draw
-    assert {:ok, r, [%{type: :drew_stock, seat: 1}]} = Round.play(r, 1, :draw_stock)
-    assert length(r.hands[1]) == 15
+    test "offer, answer and accept swap one tile of each pair", %{r: r} do
+      assert {:error, :not_a_duplicate} = Round.play(r, 0, {:offer_duplicate, 3})
+
+      {:ok, r, [%{type: :duplicate_offered, tier: :small, offer_id: 1}]} =
+        Round.play(r, 0, {:offer_duplicate, 1})
+
+      assert {:error, :duplicate_already_offered} = Round.play(r, 0, {:offer_duplicate, 2})
+      assert {:error, :own_offer} = Round.play(r, 0, {:respond_offer, 1, 1})
+
+      {:ok, r, [%{type: :offer_answered, tier: :big}]} = Round.play(r, 1, {:respond_offer, 1, 11})
+      assert {:error, :offer_not_found} = Round.play(r, 1, {:accept_response, 1, 0})
+
+      {:ok, r, [%{type: :duplicates_swapped, tiers: [:small, :big]}]} =
+        Round.play(r, 0, {:accept_response, 1, 1})
+
+      assert 11 in ids(r.hands[0]) and 1 not in ids(r.hands[0])
+      assert 1 in ids(r.hands[1]) and 11 not in ids(r.hands[1])
+      assert r.exchange.offers == %{}
+    end
+
+    test "others see only the tier of an offer", %{r: r} do
+      {:ok, r, _} = Round.play(r, 0, {:offer_duplicate, 1})
+      m = %Match{rules: @rules, seats: 2, round: r, phase: :playing, totals: %{0 => 0, 1 => 0}}
+      [offer] = Remybun.Engine.View.for_seat(m, 1).round.exchange.offers
+      assert offer.tier == :small and offer.tile == nil
+      [own] = Remybun.Engine.View.for_seat(m, 0).round.exchange.offers
+      assert own.tile.id == 1
+    end
+
+    test "ends when everyone is done", %{r: r} do
+      {:ok, r, [%{type: :exchange_ready}]} = Round.play(r, 0, :exchange_done)
+      assert {:error, :exchange_done} = Round.play(r, 0, {:offer_duplicate, 1})
+      {:ok, r, [%{type: :exchange_finished}]} = Round.play(r, 1, :exchange_done)
+      assert r.phase == :awaiting_discard and r.current == 0
+    end
+
+    test "only a player dealt 3+ duplicate pairs may refuse", %{r: r} do
+      assert {:error, :cannot_refuse} = Round.play(r, 0, :refuse_deal)
+
+      assert {:ok, %Round{phase: :refused}, [%{type: :deal_refused}]} =
+               Round.play(r, 1, :refuse_deal)
+    end
+
+    test "counts duplicate pairs, jokers included" do
+      hand = [j(104), j(105), c(1, 3, :red), c(2, 3, :red), c(3, 3, :blue)]
+      assert Round.duplicate_pairs(hand) == 2
+    end
+  end
+
+  describe "first turn" do
+    test "no melding on a player's first turn; the first discard is locked" do
+      {run, set} = opening_tiles()
+      hands = %{0 => run ++ set ++ [c(7, 2, :blue)], 1 => [c(20, 9, :blue)]}
+      r = round_with(hands, turns_taken: %{0 => 0, 1 => 0})
+
+      assert {:error, :first_turn} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
+      {:ok, r, _} = Round.play(r, 0, {:discard, 7})
+      assert r.blocked_discard == 7
+
+      assert {:error, :first_turn} = Round.play(r, 1, {:take_discard, 7, [], []})
+      r = %{r | turns_taken: %{0 => 1, 1 => 1}}
+      assert {:error, :discard_blocked} = Round.play(r, 1, {:take_discard, 7, [[7, 20]], []})
+    end
   end
 
   describe "opening" do
-    setup do
-      # 10-J-Q of hearts (30) + three 5s (15) = 45
-      run = [c(1, 10, :red), c(2, 11, :red), c(3, 12, :red)]
-      set = [c(4, 5, :black), c(5, 5, :blue), c(6, 5, :yellow)]
-      rest = [c(7, 9, :black), c(8, 2, :blue)]
-      %{run: run, set: set, rest: rest}
-    end
+    test "needs the minimum points with a run and a set" do
+      {run, set} = opening_tiles()
+      long_run = [c(30, 9, :blue), c(31, 10, :blue), c(32, 11, :blue), c(33, 12, :blue)]
+      r = round_with(%{0 => run ++ set ++ long_run ++ [c(9, 2, :blue)], 1 => []})
 
-    test "requires the minimum points in one lay-down", %{run: run, set: set, rest: rest} do
-      r = round_with(%{0 => run ++ set ++ rest, 1 => []})
-      assert {:error, :opening_too_low} = Round.play(r, 0, {:lay_down, [ids(run)]})
+      assert {:error, :opening_too_low} = Round.play(r, 0, {:lay_down, [ids(set)]})
+
+      assert {:error, :opening_needs_run_and_set} =
+               Round.play(r, 0, {:lay_down, [ids(run), ids(long_run)]})
+
       assert {:ok, r, [%{type: :laid_down}]} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
       assert r.opened[0]
-      assert length(r.melds) == 2
-      assert ids(r.hands[0]) == [7, 8]
     end
 
-    test "can't add to melds before opening", %{run: run, set: set, rest: rest} do
-      r = round_with(%{0 => rest, 1 => run ++ set}, opened: %{0 => false, 1 => true})
+    test "three 1s open on their own" do
+      ones = [c(1, 1, :red), c(2, 1, :blue), c(3, 1, :black)]
+      r = round_with(%{0 => ones ++ [c(4, 7, :red)], 1 => []})
+      assert {:ok, %Round{}, _} = Round.play(r, 0, {:lay_down, [ids(ones)]})
+    end
 
-      r = %{
-        r
-        | melds: [
-            %Remybun.Engine.Meld{
-              id: 1,
-              owner: 1,
-              type: :run,
-              color: :black,
-              start: 6,
-              cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
-            }
-          ]
+    test "no adding to table melds on the opening turn" do
+      {run, set} = opening_tiles()
+
+      table = %Meld{
+        id: 1,
+        owner: 1,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
       }
 
-      assert {:error, :not_opened} = Round.play(r, 0, {:add_to_meld, 1, [7]})
+      hands = %{0 => run ++ set ++ [c(9, 9, :black), c(10, 2, :blue)], 1 => []}
+      r = %{round_with(hands) | melds: [table], next_meld_id: 2}
 
-      r = %{r | opened: %{0 => true, 1 => true}}
-      assert {:ok, r, [%{type: :added_to_meld}]} = Round.play(r, 0, {:add_to_meld, 1, [7]})
-      assert length(hd(r.melds).cards) == 4
+      {:ok, r, _} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
+      assert {:error, :opening_turn} = Round.play(r, 0, {:add_to_meld, 1, [9]})
+
+      # On a later turn it's allowed.
+      r = %{r | turn: %{pending_joker: nil, opened_now: false}}
+      assert {:ok, _, [%{type: :added_to_meld}]} = Round.play(r, 0, {:add_to_meld, 1, [9]})
     end
 
-    test "must keep a card to discard", %{run: run, set: set} do
+    test "must keep a tile to discard and rejects tiles not held" do
+      {run, set} = opening_tiles()
       r = round_with(%{0 => run ++ set, 1 => []})
 
       assert {:error, :must_keep_card_to_discard} =
                Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
-    end
 
-    test "rejects cards not in hand and duplicates", %{run: run, set: set, rest: rest} do
-      r = round_with(%{0 => run ++ set ++ rest, 1 => []})
       assert {:error, :card_not_in_hand} = Round.play(r, 0, {:lay_down, [[1, 2, 999]]})
       assert {:error, :duplicate_cards} = Round.play(r, 0, {:lay_down, [[1, 2, 3], [3, 4, 5]]})
     end
   end
 
-  describe "discard pickup (must_use)" do
-    setup do
-      top = c(10, 13, :red)
+  describe "taking from the discard pile" do
+    test "an unopened player takes only the last tile and must open with it" do
+      {[r10, r11, r12], set} = opening_tiles()
+      discard = [c(60, 3, :yellow), r12]
+      hands = %{0 => [r10, r11 | set] ++ [c(9, 2, :blue)], 1 => []}
+      r = round_with(hands, phase: :awaiting_draw, discard: discard)
 
-      hand = [
-        c(1, 11, :red),
-        c(2, 12, :red),
-        c(3, 7, :black),
-        c(4, 7, :blue),
-        c(5, 7, :yellow),
-        c(6, 2, :black)
-      ]
+      assert {:error, :only_last_discard} = Round.play(r, 0, {:take_discard, 60, [[60, 9]], []})
+      assert {:error, :must_use_discard} = Round.play(r, 0, {:take_discard, 3, [], []})
+      # Using it in melds that don't make a valid opening is rejected as a whole.
+      assert {:error, :opening_too_low} = Round.play(r, 0, {:take_discard, 3, [[1, 2, 3]], []})
 
-      %{r: round_with(%{0 => hand, 1 => []}, phase: :awaiting_draw, discard: [top]), top: top}
+      assert {:ok, r, [%{type: :took_discard, count: 1}, %{type: :laid_down}]} =
+               Round.play(r, 0, {:take_discard, 3, [[1, 2, 3], ids(set)], []})
+
+      assert r.discard == [c(60, 3, :yellow)]
+      assert r.phase == :awaiting_discard
     end
 
-    test "taken discard must be used before discarding", %{r: r} do
-      {:ok, r, _} = Round.play(r, 0, :take_discard)
-      assert {:error, :must_use_discard} = Round.play(r, 0, {:discard, 6})
-      assert {:error, :must_use_discard} = Round.play(r, 0, {:discard, 10})
+    test "an opened player takes any tile and everything after it, using the chosen one" do
+      table = %Meld{
+        id: 1,
+        owner: 0,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
+      }
 
-      # J-Q-K hearts (30) + three 7s (21) = 51
-      {:ok, r, _} = Round.play(r, 0, {:lay_down, [[1, 2, 10], [3, 4, 5]]})
-      assert {:ok, r, events} = Round.play(r, 0, {:discard, 6})
-      assert [%{type: :discarded}, %{type: :round_finished}] = events
-      assert r.result.winner == 0
+      discard = [c(70, 2, :red), c(71, 9, :black), c(72, 5, :black), c(73, 13, :yellow)]
+
+      r = %{
+        round_with(%{0 => [c(9, 3, :red)], 1 => []},
+          phase: :awaiting_draw,
+          discard: discard,
+          opened: %{0 => true, 1 => true}
+        )
+        | melds: [table],
+          next_meld_id: 2
+      }
+
+      assert {:error, :must_use_discard} = Round.play(r, 0, {:take_discard, 71, [], [{1, [72]}]})
+
+      assert {:ok, r, [%{type: :took_discard, count: 3}, %{type: :added_to_meld}]} =
+               Round.play(r, 0, {:take_discard, 71, [], [{1, [71]}]})
+
+      assert ids(r.discard) == [70]
+      assert Enum.sort(ids(r.hands[0])) == [9, 72, 73]
     end
 
-    test "can be returned before acting", %{r: r} do
-      {:ok, r, _} = Round.play(r, 0, :take_discard)
-      assert {:ok, r, [%{type: :returned_discard}]} = Round.play(r, 0, :return_discard)
-      assert r.phase == :awaiting_draw and length(r.discard) == 1
-      assert {:ok, _, _} = Round.play(r, 0, :draw_stock)
-    end
+    test "the pile is unchanged when the take is rejected" do
+      r =
+        round_with(%{0 => [c(9, 3, :red)], 1 => []},
+          phase: :awaiting_draw,
+          discard: [c(70, 2, :red)]
+        )
 
-    test "free pickup has no obligation", %{r: r} do
-      r = %{r | rules: %{@rules | discard_pickup: :free}}
-      {:ok, r, _} = Round.play(r, 0, :take_discard)
-      assert {:ok, _, _} = Round.play(r, 0, {:discard, 10})
+      assert {:error, _} = Round.play(r, 0, {:take_discard, 70, [[70, 9]], []})
+      assert r.discard == [c(70, 2, :red)]
     end
   end
 
   test "swapped joker must be used that turn" do
-    joker = Card.joker(104)
+    joker = j(104)
 
-    meld = %Remybun.Engine.Meld{
+    meld = %Meld{
       id: 1,
       owner: 1,
       type: :run,
@@ -172,85 +280,85 @@ defmodule Remybun.Engine.RoundTest do
   end
 
   describe "scoring" do
-    test "going out: opened players pay their hand, unopened pay the flat penalty" do
-      hands = %{
-        0 => [c(1, 5, :black)],
-        1 => [c(2, 1, :red), c(3, 13, :blue), Card.joker(104)],
-        2 => [c(4, 2, :black)]
+    test "laid tiles minus hand, closing and atu bonuses" do
+      # Seat 0 laid 10-11-12 red (33) and closes; seat 1 laid three 5s (15) and holds a 1 (25)
+      # and a joker (50), and was dealt the atu's twin.
+      {run, set} = opening_tiles()
+      m0 = %Meld{id: 1, owner: 0, type: :run, color: :red, start: 10, cards: run}
+      m1 = %Meld{id: 2, owner: 1, type: :set, rank: 5, cards: set}
+      hands = %{0 => [c(7, 9, :red)], 1 => [c(8, 1, :blue), j(104)]}
+
+      r = %{
+        round_with(hands, opened: %{0 => true, 1 => true}, atu_holders: [1])
+        | melds: [m0, m1],
+          laid_by: Map.merge(Map.new(ids(run), &{&1, 0}), Map.new(ids(set), &{&1, 1}))
       }
 
-      r = round_with(hands, opened: %{0 => true, 1 => true, 2 => false})
-      {:ok, r, _} = Round.play(r, 0, {:discard, 1})
-      assert r.result.scores == %{0 => 0, 1 => 25 + 10 + 50, 2 => 100}
+      {:ok, r, _} = Round.play(r, 0, {:discard, 7})
+      assert r.result.winner == 0
+      assert r.result.scores == %{0 => 33 + 50, 1 => 15 - 75 + 50}
+
+      assert r.result.breakdown[1] ==
+               %{laid: 15, hand: 75, closing: 0, atu: 50, multiplier: 1, total: -10}
     end
 
-    test "closing with a joker doubles everyone's penalty" do
-      hands = %{0 => [Card.joker(104)], 1 => [c(2, 9, :red)]}
-      r = round_with(hands, opened: %{0 => true, 1 => true})
+    test "a joker scores as the tile it replaces; tiles added to others' melds count for the adder" do
+      meld = %Meld{
+        id: 1,
+        owner: 1,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), j(104), c(52, 8, :black)]
+      }
+
+      r = %{
+        round_with(%{0 => [c(9, 9, :black), c(10, 2, :red)], 1 => []},
+          opened: %{0 => true, 1 => true}
+        )
+        | melds: [meld],
+          laid_by: %{50 => 1, 104 => 1, 52 => 1}
+      }
+
+      {:ok, r, _} = Round.play(r, 0, {:add_to_meld, 1, [9]})
+      {:ok, r, _} = Round.play(r, 0, {:discard, 10})
+      assert r.result.breakdown[1].laid == 6 + 7 + 8
+      assert r.result.breakdown[0].laid == 9
+    end
+
+    test "closing with a joker doubles the closer; a 1/joker atu doubles everyone" do
+      hands = %{0 => [j(104)], 1 => [c(2, 9, :red)]}
+      r = round_with(hands, opened: %{0 => true, 1 => true}, multiplier: 2)
       {:ok, r, _} = Round.play(r, 0, {:discard, 104})
-      assert r.result.scores == %{0 => 0, 1 => 2 * 5}
       assert r.result.joker_close
-    end
-  end
-
-  describe "stock exhausted" do
-    test "reshuffles the discard pile except its top card" do
-      discard = [c(10, 2, :black), c(11, 3, :black), c(12, 4, :black)]
-
-      r =
-        round_with(%{0 => [c(1, 5, :black)], 1 => []},
-          phase: :awaiting_draw,
-          stock: [],
-          discard: discard
-        )
-
-      assert {:ok, r, [%{type: :stock_reshuffled}, %{type: :drew_stock}]} =
-               Round.play(r, 0, :draw_stock)
-
-      assert r.discard == [hd(discard)]
-      assert length(r.stock) == 1
+      assert r.result.scores == %{0 => 50 * 2 * 2, 1 => -5 * 2}
     end
 
-    test "ends the round when nothing can be reshuffled" do
-      r =
-        round_with(%{0 => [c(1, 5, :black)], 1 => [c(2, 6, :black)]},
-          phase: :awaiting_draw,
-          stock: [],
-          discard: [c(3, 2, :black)]
-        )
-
+    test "when the stock runs out the round ends without a closing bonus" do
+      hands = %{0 => [c(1, 5, :black)], 1 => [c(2, 6, :black)]}
+      r = round_with(hands, phase: :awaiting_draw, stock: [], discard: [c(3, 2, :black)])
       assert {:ok, r, [%{type: :round_finished}]} = Round.play(r, 0, :draw_stock)
       assert r.result.winner == nil
+      assert r.result.scores == %{0 => -5, 1 => -5}
     end
   end
 
-  describe "auto play" do
-    test "returns an unused discard, draws and discards" do
-      r =
-        round_with(%{0 => [c(1, 5, :black), c(2, 9, :red)], 1 => []},
-          phase: :awaiting_draw,
-          discard: [c(3, 13, :blue)]
-        )
-
-      {:ok, r, _} = Round.play(r, 0, :take_discard)
-      assert {:ok, r, events} = Round.auto_play(r)
-      assert Enum.map(events, & &1.type) == [:returned_discard, :drew_stock, :discarded, :turn]
-      assert r.current == 1
-    end
+  test "rejects actions out of turn or in the wrong phase" do
+    r = round_with(%{0 => [c(1, 5, :black)], 1 => [c(2, 6, :black)]})
+    assert {:error, :not_your_turn} = Round.play(r, 1, :draw_stock)
+    assert {:error, :wrong_phase} = Round.play(r, 0, :draw_stock)
+    assert {:error, :invalid_action} = Round.play(r, 0, :dance)
   end
 
-  # Cards are never created or destroyed.
-  defp all_cards(%Round{} = r) do
+  defp all_tiles(%Round{} = r) do
     Enum.flat_map(r.hands, &elem(&1, 1)) ++
-      r.stock ++ r.discard ++ Enum.flat_map(r.melds, & &1.cards)
+      r.stock ++ r.discard ++ Enum.flat_map(r.melds, & &1.cards) ++ [r.atu]
   end
 
-  property "auto-played matches finish and conserve cards" do
+  property "auto-played matches finish and conserve tiles" do
     check all(seats <- integer(2..4), seed <- integer(), max_runs: 30) do
       :rand.seed(:exsss, {seed, seed, seed})
-      # auto play never melds, so rounds end by stock exhaustion
-      rules = %{@rules | match: {:rounds, seats}, stock_exhausted: :end_round}
-      m = Match.new(rules, seats)
+      m = Match.new(%{@rules | match: {:rounds, seats}}, seats)
 
       m =
         Enum.reduce_while(1..10_000, m, fn _, m ->
@@ -264,9 +372,13 @@ defmodule Remybun.Engine.RoundTest do
 
             :playing ->
               {:ok, m, _} = Match.auto_play(m)
-              cards = all_cards(m.round)
-              assert length(cards) == 106
-              assert length(Enum.uniq_by(cards, & &1.id)) == 106
+
+              if m.round do
+                tiles = all_tiles(m.round)
+                assert length(tiles) == 106
+                assert length(Enum.uniq_by(tiles, & &1.id)) == 106
+              end
+
               {:cont, m}
           end
         end)

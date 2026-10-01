@@ -52,6 +52,13 @@ defmodule RemybunWeb.TableChannelTest do
     assert length(bob_state.game.round.hand) == 14
     assert MapSet.disjoint?(ids(alice_state.game.round.hand), ids(bob_state.game.round.hand))
 
+    # The deal starts with the duplicate exchange; play begins once everyone is done.
+    assert alice_state.game.round.phase == :exchange
+    assert alice_state.game.round.atu
+    assert_reply push(sa, "draw_stock", %{}), :error, %{reason: "wrong_phase"}
+    assert_reply push(sa, "exchange_done", %{}), :ok
+    assert_reply push(sb, "exchange_done", %{}), :ok
+
     # Alice starts by discarding; Bob can't act out of turn.
     assert_reply push(sb, "draw_stock", %{}), :error, %{reason: "not_your_turn"}
     [card | _] = alice_state.game.round.hand

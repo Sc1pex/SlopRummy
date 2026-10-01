@@ -251,7 +251,7 @@ defmodule Remybun.Tables.TableServer do
   end
 
   defp start_round(state) do
-    deck = Deck.shuffled(state.rules.jokers)
+    deck = Deck.shuffled()
     {:ok, match, events} = Match.start_round(state.match, deck)
 
     state =
@@ -263,26 +263,35 @@ defmodule Remybun.Tables.TableServer do
   ## After every change
 
   defp after_change(state, events, turn_reset? \\ false) do
-    turn_reset? = turn_reset? or Enum.any?(events, &(&1.type in [:turn, :round_started]))
+    turn_reset? =
+      turn_reset? or
+        Enum.any?(events, &(&1.type in [:turn, :round_started, :exchange_finished]))
 
     state
-    |> handle_match_progress()
+    |> handle_match_progress(events)
     |> schedule_turn_timer(turn_reset?)
     |> broadcast(events)
     |> publish_summary()
   end
 
-  defp handle_match_progress(%{status: :playing, match: %Match{phase: :between_rounds}} = state) do
-    Process.send_after(
-      self(),
-      :next_round,
-      Application.get_env(:remybun, :next_round_delay_ms, 8_000)
-    )
+  defp handle_match_progress(
+         %{status: :playing, match: %Match{phase: :between_rounds}} = state,
+         events
+       ) do
+    # A refused deal is redealt right away; otherwise give players time to see the scores.
+    delay =
+      if Enum.any?(events, &(&1.type == :deal_refused)),
+        do: Application.get_env(:remybun, :redeal_delay_ms, 2_000),
+        else: Application.get_env(:remybun, :next_round_delay_ms, 8_000)
 
+    Process.send_after(self(), :next_round, delay)
     state
   end
 
-  defp handle_match_progress(%{status: :playing, match: %Match{phase: :finished} = match} = state) do
+  defp handle_match_progress(
+         %{status: :playing, match: %Match{phase: :finished} = match} = state,
+         _events
+       ) do
     winner_user = state.players |> Enum.at(hd(match.winners)) |> Map.get(:user_id)
     Games.finish_game(state.game_id, match.totals, winner_user)
     {:ok, table} = Tables.update_table(state.table, %{status: :waiting})
@@ -307,19 +316,28 @@ defmodule Remybun.Tables.TableServer do
     }
   end
 
-  defp handle_match_progress(state), do: state
+  defp handle_match_progress(state, _events), do: state
 
   defp schedule_turn_timer(
          %{status: :playing, match: %Match{phase: :playing} = match} = state,
          reset?
        ) do
-    seat = Match.current_seat(match)
-    %{user_id: user_id} = Enum.at(state.players, seat)
-    connected? = Enum.any?(state.conns, fn {_, c} -> c.user_id == user_id end)
-
     timeout =
-      state.rules.turn_timer_ms ||
-        if(connected?, do: nil, else: Application.get_env(:remybun, :disconnect_grace_ms, 60_000))
+      case Match.current_seat(match) do
+        # Duplicate exchange: it always ends after a fixed time.
+        nil ->
+          Application.get_env(:remybun, :exchange_timeout_ms, 60_000)
+
+        seat ->
+          %{user_id: user_id} = Enum.at(state.players, seat)
+          connected? = Enum.any?(state.conns, fn {_, c} -> c.user_id == user_id end)
+
+          state.rules.turn_timer_ms ||
+            if(connected?,
+              do: nil,
+              else: Application.get_env(:remybun, :disconnect_grace_ms, 60_000)
+            )
+      end
 
     cond do
       state.timer != nil and timeout != nil and not reset? ->

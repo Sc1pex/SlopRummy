@@ -62,8 +62,39 @@ defmodule RemybunWeb.TableChannel do
 
   defp parse("start", _), do: {:ok, :start}
   defp parse("draw_stock", _), do: {:ok, :draw_stock}
-  defp parse("take_discard", _), do: {:ok, :take_discard}
-  defp parse("return_discard", _), do: {:ok, :return_discard}
+
+  # Taking from the discard pile always carries the melds/additions the tile goes into.
+  defp parse("take_discard", %{"card" => card} = p) when is_integer(card) do
+    melds = Map.get(p, "melds", [])
+    additions = Map.get(p, "additions", [])
+
+    with true <- is_list(melds) and Enum.all?(melds, &int_list?/1),
+         {:ok, additions} <- parse_additions(additions) do
+      {:ok, {:take_discard, card, melds, additions}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp parse("offer_duplicate", %{"card" => card}) when is_integer(card),
+    do: {:ok, {:offer_duplicate, card}}
+
+  defp parse("withdraw_offer", %{"offer_id" => id}) when is_integer(id),
+    do: {:ok, {:withdraw_offer, id}}
+
+  defp parse("respond_offer", %{"offer_id" => id, "card" => card})
+       when is_integer(id) and is_integer(card),
+       do: {:ok, {:respond_offer, id, card}}
+
+  defp parse("withdraw_response", %{"offer_id" => id}) when is_integer(id),
+    do: {:ok, {:withdraw_response, id}}
+
+  defp parse("accept_response", %{"offer_id" => id, "seat" => seat})
+       when is_integer(id) and is_integer(seat),
+       do: {:ok, {:accept_response, id, seat}}
+
+  defp parse("exchange_done", _), do: {:ok, :exchange_done}
+  defp parse("refuse_deal", _), do: {:ok, :refuse_deal}
 
   defp parse("lay_down", %{"melds" => melds}) when is_list(melds) do
     if melds != [] and Enum.all?(melds, &int_list?/1), do: {:ok, {:lay_down, melds}}, else: :error
@@ -80,6 +111,18 @@ defmodule RemybunWeb.TableChannel do
   defp parse("discard", %{"card" => card}) when is_integer(card), do: {:ok, {:discard, card}}
   defp parse("chat", %{"text" => text}) when is_binary(text), do: {:ok, {:chat, text}}
   defp parse(_, _), do: :error
+
+  defp parse_additions(additions) when is_list(additions) do
+    Enum.reduce_while(additions, {:ok, []}, fn
+      %{"meld_id" => id, "cards" => cards}, {:ok, acc} when is_integer(id) ->
+        if int_list?(cards), do: {:cont, {:ok, acc ++ [{id, cards}]}}, else: {:halt, :error}
+
+      _, _ ->
+        {:halt, :error}
+    end)
+  end
+
+  defp parse_additions(_), do: :error
 
   defp int_list?(list), do: is_list(list) and list != [] and Enum.all?(list, &is_integer/1)
 end

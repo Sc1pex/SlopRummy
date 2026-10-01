@@ -1,12 +1,13 @@
 defmodule Remybun.Engine.Match do
   @moduledoc """
-  A match is a series of rounds with cumulative penalty points (lower is better).
+  A match is a series of rounds with cumulative points (higher is better).
 
   Phases: `:between_rounds` (including before the first round) → `:playing` → … → `:finished`.
-  The starting seat rotates every round.
+  The starting seat rotates every round. A refused deal goes back to `:between_rounds`
+  without counting as a round, so the same seat starts the redeal.
   """
 
-  alias Remybun.Engine.{Round, Rules}
+  alias Remybun.Engine.{Card, Round, Rules}
 
   defstruct [
     :rules,
@@ -30,7 +31,13 @@ defmodule Remybun.Engine.Match do
     starting = rem(m.rounds_played, m.seats)
     round = Round.new(m.rules, m.seats, starting, deck)
 
-    event = %{type: :round_started, round: m.rounds_played + 1, starting_seat: starting}
+    event = %{
+      type: :round_started,
+      round: m.rounds_played + 1,
+      starting_seat: starting,
+      atu: Card.to_map(round.atu)
+    }
+
     {:ok, %{m | round: round, phase: :playing}, [event]}
   end
 
@@ -52,17 +59,24 @@ defmodule Remybun.Engine.Match do
 
   def auto_play(%__MODULE__{} = m), do: {:ok, m, []}
 
-  @doc "Seat whose turn it is, or nil."
-  def current_seat(%__MODULE__{phase: :playing, round: round}), do: round.current
+  @doc "Seat whose turn it is, or nil (also nil during the duplicate exchange)."
+  def current_seat(%__MODULE__{phase: :playing, round: %Round{phase: phase} = round})
+      when phase in [:awaiting_draw, :awaiting_discard],
+      do: round.current
+
   def current_seat(_), do: nil
+
+  defp after_round(%__MODULE__{round: %Round{phase: :refused}} = m, events) do
+    {:ok, %{m | phase: :between_rounds, round: nil}, events}
+  end
 
   defp after_round(%__MODULE__{round: %Round{phase: :finished, result: result}} = m, events) do
     totals = Map.merge(m.totals, result.scores, fn _seat, a, b -> a + b end)
     m = %{m | totals: totals, rounds_played: m.rounds_played + 1, history: m.history ++ [result]}
 
     if match_over?(m) do
-      min = totals |> Map.values() |> Enum.min()
-      winners = for {seat, total} <- totals, total == min, do: seat
+      max = totals |> Map.values() |> Enum.max()
+      winners = for {seat, total} <- totals, total == max, do: seat
       m = %{m | phase: :finished, winners: Enum.sort(winners)}
       {:ok, m, events ++ [%{type: :match_finished, totals: totals, winners: m.winners}]}
     else

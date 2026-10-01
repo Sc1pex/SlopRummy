@@ -41,6 +41,16 @@ defmodule Remybun.Engine.Card do
   def position_value(14), do: 25
   def position_value(rank), do: rank
 
+  @doc "Duplicate tier, used when swapping duplicates: small (2-9), big (10-13), nail (1), joker."
+  def tier(%__MODULE__{rank: nil}), do: :joker
+  def tier(%__MODULE__{rank: 1}), do: :nail
+  def tier(%__MODULE__{rank: rank}) when rank >= 10, do: :big
+  def tier(%__MODULE__{}), do: :small
+
+  @doc "Whether two tiles are identical (same number and color, or both jokers)."
+  def twin?(%__MODULE__{} = a, %__MODULE__{} = b),
+    do: a.id != b.id and a.rank == b.rank and a.color == b.color
+
   def to_map(%__MODULE__{rank: nil, id: id}), do: %{id: id, joker: true}
   def to_map(%__MODULE__{} = c), do: %{id: c.id, rank: c.rank, color: c.color, joker: false}
 end

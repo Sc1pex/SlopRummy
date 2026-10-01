@@ -14,7 +14,6 @@ defmodule RemybunWeb.MatchFlowTest do
 
     overrides = %{
       "match" => %{"type" => "single"},
-      "stock_exhausted" => "end_round",
       "turn_timer_ms" => 5_000
     }
 
