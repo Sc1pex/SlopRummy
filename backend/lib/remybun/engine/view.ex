@@ -35,7 +35,11 @@ defmodule Remybun.Engine.View do
       blocked_discard: round.blocked_discard,
       atu: Card.to_map(round.atu),
       atu_multiplier: round.multiplier,
-      atu_holders: round.atu_holders,
+      atu_announced: round.atu_announced,
+      atu_taken: round.atu_taken,
+      can_announce_atu:
+        round.phase == :exchange and seat in round.atu_holders and seat not in round.atu_announced,
+      last_tiles: round.last_tiles,
       melds: Enum.map(round.melds, &Meld.to_map/1),
       opened: round.opened,
       first_turn: Map.new(round.turns_taken, fn {s, n} -> {s, n == 0} end),

@@ -76,6 +76,19 @@ defmodule RemybunWeb.TableChannel do
     end
   end
 
+  defp parse("take_atu", p) do
+    melds = Map.get(p, "melds", [])
+
+    with true <- is_list(melds) and Enum.all?(melds, &int_list?/1),
+         {:ok, additions} <- parse_additions(Map.get(p, "additions", [])) do
+      {:ok, {:take_atu, melds, additions}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp parse("announce_atu", _), do: {:ok, :announce_atu}
+
   defp parse("offer_duplicate", %{"card" => card}) when is_integer(card),
     do: {:ok, {:offer_duplicate, card}}
 
@@ -102,6 +115,10 @@ defmodule RemybunWeb.TableChannel do
 
   defp parse("add_to_meld", %{"meld_id" => id, "cards" => cards}) when is_integer(id) do
     if int_list?(cards), do: {:ok, {:add_to_meld, id, cards}}, else: :error
+  end
+
+  defp parse("swap_joker", %{"meld_id" => id, "cards" => cards}) when is_integer(id) do
+    if int_list?(cards), do: {:ok, {:swap_joker, id, cards}}, else: :error
   end
 
   defp parse("swap_joker", %{"meld_id" => id, "card" => card})

@@ -16,29 +16,41 @@ defmodule Remybun.Engine.Round do
   ## Actions (`play/3`)
   Exchange phase (any seat): `{:offer_duplicate, tile_id}`, `{:withdraw_offer, offer_id}`,
   `{:respond_offer, offer_id, tile_id}`, `{:withdraw_response, offer_id}`,
-  `{:accept_response, offer_id, seat}`, `:exchange_done`, `:refuse_deal`.
+  `{:accept_response, offer_id, seat}`, `:announce_atu`, `:exchange_done`, `:refuse_deal`.
 
   Turns: `:draw_stock`, `{:take_discard, tile_id, melds, additions}`,
   `{:lay_down, [[tile_id]]}`, `{:add_to_meld, meld_id, [tile_id]}`,
-  `{:swap_joker, meld_id, tile_id}`, `{:discard, tile_id}`.
+  `{:swap_joker, meld_id, [tile_id]}`, `{:take_atu, melds, additions}`, `{:discard, tile_id}`.
+
+  ## Atu
+  The player dealt the atu's twin must announce it during the exchange phase to get the
+  bonus. The atu tile itself can be taken only on the turn a player closes: it must be used
+  in the same action, which must leave just the closing tile in hand.
 
   ## Discard pile
   A row in the order tiles were discarded. The starting player's first discard can never
   be taken. A player who hasn't opened may take only the last tile; a player who has
-  opened may take any tile and gets every tile after it too. The chosen tile must be used
-  in the same action (`take_discard` carries the melds/additions it goes into).
+  opened and holds at least 4 tiles may take any tile and gets every tile after it too.
+  The chosen tile must be used in the same action (`take_discard` carries the melds and
+  additions it goes into).
+
+  ## Last tiles
+  Holding 3 or fewer tiles is announced automatically (`:last_tiles` event). With 3 tiles
+  at the start of the turn a player may take only the last discard; with 1–2 they must draw.
+  With 3 or fewer they may not lay down new melds, only add to melds on the table.
 
   ## Restrictions
   No melding (laying down, adding, swapping jokers, taking a discard) on a player's first
   turn. On the turn a player opens they may not add to melds already on the table.
   An opening needs `opening_min_points` with at least one run and one set, unless it
-  includes a set of 1s.
+  includes a set of 1s. A joker may be added only to the player's own melds.
 
   ## Scoring
   Per player: value of the tiles they laid minus the tiles left in hand (2–9 = 5,
-  10–13 = 10, 1 = 25, joker = 50 either way); a player who never opened pays
-  `not_opened_penalty` instead of counting their hand, plus the closing bonus and the atu bonus. Then closing
-  with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
+  10–13 = 10, 1 = 25, joker = 50 either way; a joker that was taken back and laid again is
+  worth 0); a player who never opened pays `not_opened_penalty` instead of counting their
+  hand. Plus `closing_bonus` for the closer and the atu bonus if announced. Then closing
+  with a joker or a 1 doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out the round ends and nobody gets the closing bonus.
 
   Every action returns `{:ok, round, events}` or `{:error, reason}`. Events are
@@ -65,15 +77,19 @@ defmodule Remybun.Engine.Round do
     turns_taken: %{},
     laid_by: %{},
     atu_holders: [],
+    atu_announced: [],
+    atu_taken: false,
+    reused_jokers: MapSet.new(),
+    last_tiles: [],
     multiplier: 1,
     next_meld_id: 1,
     exchange: nil,
-    turn: %{pending_joker: nil, opened_now: false}
+    turn: %{pending_joker: nil, opened_now: false, small_hand: false}
   ]
 
   @type t :: %__MODULE__{}
 
-  @new_turn %{pending_joker: nil, opened_now: false}
+  @new_turn %{pending_joker: nil, opened_now: false, small_hand: false}
 
   @doc "Deals a new round from `deck` (already shuffled)."
   def new(%Rules{} = rules, seats, starting_seat, deck) when starting_seat in 0..(seats - 1)//1 do
@@ -139,8 +155,12 @@ defmodule Remybun.Engine.Round do
         {:take_discard, tile_id, melds, additions}
       )
       when is_list(melds) and is_list(additions) do
+    held = length(r.hands[seat])
+
     with :ok <- check_not_first_turn(r, seat),
-         {:ok, index} <- discard_index(r, seat, tile_id) do
+         :ok <- if(held <= 2, do: {:error, :must_draw}, else: :ok),
+         {:ok, index} <- discard_index(r, seat, tile_id, held),
+         :ok <- if(held <= 3 and melds != [], do: {:error, :must_add_to_melds}, else: :ok) do
       {kept, taken} = Enum.split(r.discard, index)
       opened_before = r.opened[seat]
 
@@ -149,7 +169,7 @@ defmodule Remybun.Engine.Round do
         | discard: kept,
           hands: Map.update!(r.hands, seat, &(&1 ++ taken)),
           phase: :awaiting_discard,
-          turn: @new_turn
+          turn: %{@new_turn | small_hand: held <= 3}
       }
 
       event = %{
@@ -171,7 +191,10 @@ defmodule Remybun.Engine.Round do
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:lay_down, groups})
       when is_list(groups) do
-    with :ok <- check_not_first_turn(r, seat), do: lay_down(r, seat, groups)
+    with :ok <- check_not_first_turn(r, seat),
+         :ok <- check_not_small_hand(r) do
+      lay_down(r, seat, groups)
+    end
   end
 
   def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:add_to_meld, meld_id, ids})
@@ -179,22 +202,50 @@ defmodule Remybun.Engine.Round do
     with :ok <- check_not_first_turn(r, seat), do: apply_additions(r, seat, [{meld_id, ids}])
   end
 
-  def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:swap_joker, meld_id, card_id}) do
+  def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:swap_joker, meld_id, ids})
+      when is_list(ids) do
     with :ok <- check_not_first_turn(r, seat),
          :ok <- check_can_touch_table(r, seat),
          true <- r.rules.joker_swap || {:error, :joker_swap_disabled},
          {:ok, meld} <- find_meld(r, meld_id),
-         {:ok, card, hand} <- take_from_hand(r.hands[seat], card_id),
-         {:ok, meld, joker} <- Meld.swap_joker(meld, card) do
+         {:ok, [cards], hand} <- take_groups(r.hands[seat], [ids]),
+         {:ok, meld, joker} <- Meld.swap_joker(meld, cards) do
       r = %{
         r
         | hands: Map.put(r.hands, seat, hand ++ [joker]),
           melds: replace_meld(r.melds, meld),
-          laid_by: r.laid_by |> Map.put(card.id, seat) |> Map.delete(joker.id),
+          laid_by:
+            cards
+            |> Enum.reduce(r.laid_by, &Map.put(&2, &1.id, seat))
+            |> Map.delete(joker.id),
+          reused_jokers: MapSet.put(r.reused_jokers, joker.id),
           turn: %{r.turn | pending_joker: joker.id}
       }
 
       {:ok, r, [%{type: :swapped_joker, seat: seat, meld: Meld.to_map(meld)}]}
+    end
+  end
+
+  def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:swap_joker, meld_id, id})
+      when is_integer(id),
+      do: play(r, seat, {:swap_joker, meld_id, [id]})
+
+  # The atu can be taken only to close: used right away, leaving just the closing tile.
+  def play(%__MODULE__{phase: :awaiting_discard} = r, seat, {:take_atu, melds, additions})
+      when is_list(melds) and is_list(additions) do
+    with :ok <- check_not_first_turn(r, seat),
+         :ok <- if(r.atu_taken, do: {:error, :atu_taken}, else: :ok),
+         :ok <- if(melds == [] and additions == [], do: {:error, :must_use_atu}, else: :ok),
+         :ok <- if(melds != [], do: check_not_small_hand(r), else: :ok) do
+      r = %{r | hands: Map.update!(r.hands, seat, &(&1 ++ [r.atu]))}
+
+      with {:ok, r, e1} <- if(melds == [], do: {:ok, r, []}, else: lay_down(r, seat, melds)),
+           {:ok, r, e2} <- apply_additions(r, seat, additions),
+           :ok <- if(in_hand?(r.hands[seat], r.atu.id), do: {:error, :must_use_atu}, else: :ok),
+           :ok <- if(length(r.hands[seat]) == 1, do: :ok, else: {:error, :atu_only_when_closing}) do
+        event = %{type: :took_atu, seat: seat, card: Card.to_map(r.atu)}
+        {:ok, %{r | atu_taken: true}, [event | e1 ++ e2]}
+      end
     end
   end
 
@@ -205,9 +256,16 @@ defmodule Remybun.Engine.Round do
   end
 
   def play(%__MODULE__{}, _seat, action)
-      when action in [:draw_stock, :exchange_done, :refuse_deal] or
+      when action in [:draw_stock, :exchange_done, :refuse_deal, :announce_atu] or
              (is_tuple(action) and
-                elem(action, 0) in [:take_discard, :lay_down, :add_to_meld, :swap_joker, :discard]),
+                elem(action, 0) in [
+                  :take_discard,
+                  :lay_down,
+                  :add_to_meld,
+                  :swap_joker,
+                  :take_atu,
+                  :discard
+                ]),
       do: {:error, :wrong_phase}
 
   def play(%__MODULE__{}, _seat, _action), do: {:error, :invalid_action}
@@ -328,6 +386,20 @@ defmodule Remybun.Engine.Round do
     end
   end
 
+  defp exchange(r, seat, :announce_atu) do
+    cond do
+      seat not in r.atu_holders ->
+        {:error, :no_atu}
+
+      seat in r.atu_announced ->
+        {:error, :atu_already_announced}
+
+      true ->
+        {:ok, %{r | atu_announced: [seat | r.atu_announced]},
+         [%{type: :atu_announced, seat: seat}]}
+    end
+  end
+
   defp exchange(r, seat, :refuse_deal) do
     if seat in r.exchange.can_refuse do
       {:ok, %{r | phase: :refused}, [%{type: :deal_refused, seat: seat}]}
@@ -413,20 +485,21 @@ defmodule Remybun.Engine.Round do
       | stock: rest,
         hands: Map.update!(r.hands, seat, &(&1 ++ [card])),
         phase: :awaiting_discard,
-        turn: @new_turn
+        turn: %{@new_turn | small_hand: length(r.hands[seat]) <= 3}
     }
 
     {:ok, r, [%{type: :drew_stock, seat: seat}]}
   end
 
-  defp discard_index(r, seat, tile_id) do
+  # Only the last tile, unless the player has opened and holds at least 4 tiles.
+  defp discard_index(r, seat, tile_id, held) do
     index = Enum.find_index(r.discard, &(&1.id == tile_id))
     last = length(r.discard) - 1
 
     cond do
       index == nil -> {:error, :card_not_found}
       tile_id == r.blocked_discard -> {:error, :discard_blocked}
-      index != last and not r.opened[seat] -> {:error, :only_last_discard}
+      index != last and not (r.opened[seat] and held >= 4) -> {:error, :only_last_discard}
       true -> {:ok, index}
     end
   end
@@ -480,6 +553,11 @@ defmodule Remybun.Engine.Round do
     with {:ok, meld} <- find_meld(r, meld_id),
          {:ok, [cards], hand} <- take_groups(r.hands[seat], [ids]),
          true <- cards != [] || {:error, :invalid_meld},
+         :ok <-
+           if(meld.owner != seat and Enum.any?(cards, &Card.joker?/1),
+             do: {:error, :joker_on_others_meld},
+             else: :ok
+           ),
          {:ok, meld} <- Meld.add(meld, cards, r.rules.max_jokers_per_meld),
          :ok <- check_hand_left(hand) do
       r = %{
@@ -508,20 +586,29 @@ defmodule Remybun.Engine.Round do
       event = %{type: :discarded, seat: seat, card: Card.to_map(card)}
 
       if hand == [] do
-        r = finish(r, seat, Card.joker?(card))
+        # Closing with a joker or a 1 doubles the closer's score.
+        r = finish(r, seat, Card.joker?(card) or card.rank == 1)
         {:ok, r, [event, %{type: :round_finished, result: r.result}]}
       else
+        # Holding 3 or fewer tiles is announced automatically.
+        {r, announce} =
+          if length(hand) <= 3 and seat not in r.last_tiles,
+            do:
+              {%{r | last_tiles: [seat | r.last_tiles]},
+               [%{type: :last_tiles, seat: seat, count: length(hand)}]},
+            else: {r, []}
+
         next = rem(seat + 1, r.seats)
         r = %{r | current: next, phase: :awaiting_draw, turn: @new_turn}
-        {:ok, r, [event, %{type: :turn, seat: next}]}
+        {:ok, r, [event | announce] ++ [%{type: :turn, seat: next}]}
       end
     end
   end
 
-  defp finish(r, closer, joker_close) do
+  defp finish(r, closer, double_close) do
     laid =
       for meld <- r.melds,
-          {card, value} <- Meld.tile_values(meld, Rules.joker_penalty()),
+          {card, value} <- Meld.tile_values(meld, Rules.joker_penalty(), r.reused_jokers),
           reduce: %{} do
         acc -> Map.update(acc, r.laid_by[card.id], value, &(&1 + value))
       end
@@ -537,10 +624,10 @@ defmodule Remybun.Engine.Round do
               r.hands[seat] |> Enum.map(&Card.hand_value(&1, Rules.joker_penalty())) |> Enum.sum(),
             else: r.rules.not_opened_penalty
 
-        closing = if seat == closer, do: Rules.closing_bonus(), else: 0
-        atu = if seat in r.atu_holders, do: Rules.atu_bonus(), else: 0
+        closing = if seat == closer, do: r.rules.closing_bonus, else: 0
+        atu = if seat in r.atu_announced, do: Rules.atu_bonus(), else: 0
         sum = laid_points - hand_points + closing + atu
-        multiplier = r.multiplier * if(seat == closer and joker_close, do: 2, else: 1)
+        multiplier = r.multiplier * if(seat == closer and double_close, do: 2, else: 1)
 
         {seat,
          %{
@@ -556,7 +643,7 @@ defmodule Remybun.Engine.Round do
 
     result = %{
       winner: closer,
-      joker_close: joker_close,
+      double_close: double_close,
       atu_multiplier: r.multiplier,
       scores: Map.new(breakdown, fn {seat, b} -> {seat, b.total} end),
       breakdown: breakdown,
@@ -592,6 +679,11 @@ defmodule Remybun.Engine.Round do
       not (has.(:run) and has.(:set)) -> {:error, :opening_needs_run_and_set}
       true -> :ok
     end
+  end
+
+  # With 3 or fewer tiles at the start of the turn, no new melds; only additions.
+  defp check_not_small_hand(r) do
+    if r.turn.small_hand, do: {:error, :must_add_to_melds}, else: :ok
   end
 
   # A player must always keep a tile to discard; going out happens only by discarding.

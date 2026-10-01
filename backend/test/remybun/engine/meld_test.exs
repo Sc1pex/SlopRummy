@@ -79,8 +79,25 @@ defmodule Remybun.Engine.MeldTest do
     end
 
     test "respects the joker limit" do
-      assert {:error, _} = Meld.build([c(4, :red), j(), j()], 1)
-      assert {:ok, _} = Meld.build([c(4, :red), j(), j()], 2)
+      tiles = [c(4, :red), j(), c(6, :red), c(7, :red), j(), c(9, :red)]
+      assert {:error, _} = Meld.build(tiles, 1)
+      assert {:ok, %Meld{start: 4}} = Meld.build(tiles, 2)
+    end
+
+    test "one joker needs two real tiles, two jokers need four and may not touch" do
+      assert {:error, _} = Meld.build([c(4, :red), j(), j()], 2)
+      assert {:error, _} = Meld.build([c(4, :red), c(5, :red), c(6, :red), j(), j()], 2)
+      # Gaps filled by two jokers side by side
+      assert {:error, _} =
+               Meld.build([c(4, :red), j(), j(), c(7, :red), c(8, :red), c(9, :red)], 2)
+
+      # Free jokers are placed apart: one above, one below
+      assert {:ok, %Meld{start: 3} = run} =
+               Meld.build([c(4, :red), c(5, :red), c(6, :red), c(7, :red), j(), j()], 2)
+
+      assert length(run.cards) == 6
+      # Sets hold at most one joker
+      assert {:error, _} = Meld.build([c(8, :red), c(8, :blue), j(), j()], 2)
     end
 
     test "can't be all jokers" do
@@ -126,21 +143,30 @@ defmodule Remybun.Engine.MeldTest do
     test "in a run, requires the exact card" do
       joker = j()
       {:ok, run} = Meld.build([c(4, :red), joker, c(6, :red)], 1)
-      assert {:error, :invalid_swap} = Meld.swap_joker(run, c(5, :blue))
-      assert {:ok, run, ^joker} = Meld.swap_joker(run, c(5, :red))
+      assert {:error, :invalid_swap} = Meld.swap_joker(run, [c(5, :blue)])
+      assert {:ok, run, ^joker} = Meld.swap_joker(run, [c(5, :red)])
       refute Enum.any?(run.cards, &Card.joker?/1)
     end
 
-    test "in a set, requires a missing color" do
+    test "in a set of 3, both missing colors are needed" do
       joker = j()
       {:ok, set} = Meld.build([c(8, :red), c(8, :blue), joker], 1)
-      assert {:error, _} = Meld.swap_joker(set, c(8, :red))
-      assert {:ok, _, ^joker} = Meld.swap_joker(set, c(8, :black))
+      assert {:error, _} = Meld.swap_joker(set, [c(8, :black)])
+      assert {:error, _} = Meld.swap_joker(set, [c(8, :black), c(8, :red)])
+      assert {:ok, set, ^joker} = Meld.swap_joker(set, [c(8, :black), c(8, :yellow)])
+      assert length(set.cards) == 4
+    end
+
+    test "in a set of 4, the missing color" do
+      joker = j()
+      {:ok, set} = Meld.build([c(8, :red), c(8, :blue), c(8, :black), joker], 1)
+      assert {:error, _} = Meld.swap_joker(set, [c(8, :red)])
+      assert {:ok, _, ^joker} = Meld.swap_joker(set, [c(8, :yellow)])
     end
 
     test "no joker to swap" do
       {:ok, set} = Meld.build([c(8, :red), c(8, :blue), c(8, :black)], 1)
-      assert {:error, _} = Meld.swap_joker(set, c(8, :yellow))
+      assert {:error, _} = Meld.swap_joker(set, [c(8, :yellow)])
     end
   end
 end

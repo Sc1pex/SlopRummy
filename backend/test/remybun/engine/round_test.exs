@@ -26,6 +26,7 @@ defmodule Remybun.Engine.RoundTest do
         phase: Keyword.get(opts, :phase, :awaiting_discard),
         atu: Keyword.get(opts, :atu, c(950, 7, :blue)),
         atu_holders: Keyword.get(opts, :atu_holders, []),
+        atu_announced: Keyword.get(opts, :atu_announced, []),
         multiplier: Keyword.get(opts, :multiplier, 1),
         exchange: nil
     }
@@ -126,7 +127,8 @@ defmodule Remybun.Engine.RoundTest do
   describe "first turn" do
     test "no melding on a player's first turn; the first discard is locked" do
       {run, set} = opening_tiles()
-      hands = %{0 => run ++ set ++ [c(7, 2, :blue)], 1 => [c(20, 9, :blue)]}
+      seat1 = [c(20, 9, :blue), c(21, 3, :red), c(22, 4, :red), c(23, 5, :red)]
+      hands = %{0 => run ++ set ++ [c(7, 2, :blue)], 1 => seat1}
       r = round_with(hands, turns_taken: %{0 => 0, 1 => 0})
 
       assert {:error, :first_turn} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
@@ -227,7 +229,8 @@ defmodule Remybun.Engine.RoundTest do
       discard = [c(70, 2, :red), c(71, 9, :black), c(72, 5, :black), c(73, 13, :yellow)]
 
       r = %{
-        round_with(%{0 => [c(9, 3, :red)], 1 => []},
+        round_with(
+          %{0 => [c(9, 3, :red), c(10, 4, :red), c(11, 6, :blue), c(12, 7, :yellow)], 1 => []},
           phase: :awaiting_draw,
           discard: discard,
           opened: %{0 => true, 1 => true}
@@ -242,18 +245,177 @@ defmodule Remybun.Engine.RoundTest do
                Round.play(r, 0, {:take_discard, 71, [], [{1, [71]}]})
 
       assert ids(r.discard) == [70]
-      assert Enum.sort(ids(r.hands[0])) == [9, 72, 73]
+      assert Enum.sort(ids(r.hands[0])) == [9, 10, 11, 12, 72, 73]
     end
 
     test "the pile is unchanged when the take is rejected" do
       r =
-        round_with(%{0 => [c(9, 3, :red)], 1 => []},
+        round_with(
+          %{0 => [c(9, 3, :red), c(10, 9, :blue), c(11, 5, :black), c(12, 8, :red)], 1 => []},
           phase: :awaiting_draw,
           discard: [c(70, 2, :red)]
         )
 
       assert {:error, _} = Round.play(r, 0, {:take_discard, 70, [[70, 9]], []})
       assert r.discard == [c(70, 2, :red)]
+    end
+  end
+
+  describe "last tiles" do
+    setup do
+      table = %Meld{
+        id: 1,
+        owner: 0,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
+      }
+
+      discard = [c(70, 2, :red), c(71, 9, :black), c(72, 5, :yellow)]
+      %{table: table, discard: discard}
+    end
+
+    test "with 3 tiles only the last discard, and it must be added, not melded", ctx do
+      hand = [c(1, 5, :red), c(2, 5, :blue), c(3, 10, :yellow)]
+
+      r = %{
+        round_with(%{0 => hand, 1 => []},
+          phase: :awaiting_draw,
+          discard: ctx.discard ++ [c(73, 9, :black)],
+          opened: %{0 => true, 1 => true}
+        )
+        | melds: [ctx.table]
+      }
+
+      assert {:error, :only_last_discard} = Round.play(r, 0, {:take_discard, 71, [], [{1, [71]}]})
+
+      assert {:error, :must_add_to_melds} =
+               Round.play(r, 0, {:take_discard, 73, [[1, 2, 73]], []})
+
+      r = %{r | discard: ctx.discard ++ [c(73, 9, :black)]}
+      assert {:ok, r, _} = Round.play(r, 0, {:take_discard, 73, [], [{1, [73]}]})
+      assert {:error, :must_add_to_melds} = Round.play(r, 0, {:lay_down, [[1, 2, 3]]})
+    end
+
+    test "with 1-2 tiles the player must draw", ctx do
+      r =
+        round_with(%{0 => [c(1, 5, :red), c(2, 9, :blue)], 1 => []},
+          phase: :awaiting_draw,
+          discard: ctx.discard,
+          opened: %{0 => true, 1 => true}
+        )
+
+      assert {:error, :must_draw} = Round.play(r, 0, {:take_discard, 72, [], [{1, [72]}]})
+      assert {:ok, %Round{turn: %{small_hand: true}}, _} = Round.play(r, 0, :draw_stock)
+    end
+
+    test "dropping to 3 tiles is announced once" do
+      hand = [c(1, 5, :red), c(2, 9, :blue), c(3, 10, :yellow), c(4, 7, :black)]
+      r = round_with(%{0 => hand, 1 => [c(9, 2, :red)]})
+      {:ok, r, events} = Round.play(r, 0, {:discard, 4})
+      assert %{type: :last_tiles, seat: 0, count: 3} in events
+      assert r.last_tiles == [0]
+    end
+  end
+
+  describe "jokers" do
+    test "a joker can be added only to the player's own melds" do
+      other = %Meld{
+        id: 1,
+        owner: 1,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
+      }
+
+      own = %{
+        other
+        | id: 2,
+          owner: 0,
+          color: :red,
+          cards: [c(60, 6, :red), c(61, 7, :red), c(62, 8, :red)]
+      }
+
+      hand = [j(104), c(1, 3, :blue), c(2, 4, :blue), c(3, 5, :blue)]
+
+      r = %{
+        round_with(%{0 => hand, 1 => []}, opened: %{0 => true, 1 => true})
+        | melds: [other, own]
+      }
+
+      assert {:error, :joker_on_others_meld} = Round.play(r, 0, {:add_to_meld, 1, [104]})
+      assert {:ok, _, _} = Round.play(r, 0, {:add_to_meld, 2, [104]})
+    end
+
+    test "a joker taken back and laid again scores 0" do
+      joker = j(104)
+
+      meld = %Meld{
+        id: 1,
+        owner: 1,
+        type: :run,
+        color: :black,
+        start: 6,
+        cards: [c(50, 6, :black), joker, c(52, 8, :black)]
+      }
+
+      hand = [c(1, 7, :black), c(2, 9, :red), c(3, 10, :red), c(4, 2, :blue), c(5, 3, :yellow)]
+
+      r = %{
+        round_with(%{0 => hand, 1 => []}, opened: %{0 => true, 1 => true})
+        | melds: [meld],
+          next_meld_id: 2
+      }
+
+      {:ok, r, _} = Round.play(r, 0, {:swap_joker, 1, [1]})
+      {:ok, r, _} = Round.play(r, 0, {:lay_down, [[2, 3, 104]]})
+      r = %{r | hands: %{r.hands | 0 => [c(4, 2, :blue)]}}
+      {:ok, r, _} = Round.play(r, 0, {:discard, 4})
+      # 7 black (5) + 9 red (5) + 10 red (10) + the re-used joker (0)
+      assert r.result.breakdown[0].laid == 20
+    end
+  end
+
+  describe "atu" do
+    test "the holder must announce it during the exchange" do
+      r = %{
+        round_with(%{0 => [c(1, 5, :red)], 1 => [c(2, 9, :red)]}, atu_holders: [1])
+        | phase: :exchange,
+          exchange: %{offers: %{}, next_offer_id: 1, done: MapSet.new(), can_refuse: []}
+      }
+
+      assert {:error, :no_atu} = Round.play(r, 0, :announce_atu)
+      assert {:ok, r, [%{type: :atu_announced, seat: 1}]} = Round.play(r, 1, :announce_atu)
+      assert {:error, :atu_already_announced} = Round.play(r, 1, :announce_atu)
+      assert r.atu_announced == [1]
+    end
+
+    test "the atu tile can be taken only to close" do
+      table = %Meld{
+        id: 1,
+        owner: 0,
+        type: :run,
+        color: :blue,
+        start: 4,
+        cards: [c(50, 4, :blue), c(51, 5, :blue), c(52, 6, :blue)]
+      }
+
+      atu = c(950, 7, :blue)
+
+      base = %{
+        round_with(%{0 => [], 1 => []}, atu: atu, opened: %{0 => true, 1 => true})
+        | melds: [table]
+      }
+
+      r = %{base | hands: %{0 => [c(1, 9, :red), c(2, 3, :black)], 1 => []}}
+      assert {:error, :atu_only_when_closing} = Round.play(r, 0, {:take_atu, [], [{1, [950]}]})
+
+      r = %{base | hands: %{0 => [c(1, 9, :red)], 1 => []}}
+      assert {:ok, r, [%{type: :took_atu} | _]} = Round.play(r, 0, {:take_atu, [], [{1, [950]}]})
+      assert r.atu_taken
+      assert {:ok, %Round{phase: :finished}, _} = Round.play(r, 0, {:discard, 1})
     end
   end
 
@@ -311,7 +473,7 @@ defmodule Remybun.Engine.RoundTest do
       hands = %{0 => [c(7, 9, :red)], 1 => [c(8, 1, :blue), j(104)]}
 
       r = %{
-        round_with(hands, opened: %{0 => true, 1 => true}, atu_holders: [1])
+        round_with(hands, opened: %{0 => true, 1 => true}, atu_holders: [1], atu_announced: [1])
         | melds: [m0, m1],
           laid_by: Map.merge(Map.new(ids(run), &{&1, 0}), Map.new(ids(set), &{&1, 1}))
       }
@@ -322,6 +484,10 @@ defmodule Remybun.Engine.RoundTest do
 
       assert r.result.breakdown[1] ==
                %{laid: 15, hand: 75, opened: true, closing: 0, atu: 50, multiplier: 1, total: -10}
+
+      # The atu bonus needs the announcement.
+      r = %{r | atu_announced: []}
+      assert r.atu_holders == [1]
     end
 
     test "a laid joker scores 50; tiles added to others' melds count for the adder" do
@@ -348,11 +514,29 @@ defmodule Remybun.Engine.RoundTest do
       assert r.result.breakdown[0].laid == 5
     end
 
+    test "closing with a 1 doubles the closer's score" do
+      r =
+        round_with(%{0 => [c(1, 1, :red)], 1 => [c(2, 9, :red)]}, opened: %{0 => true, 1 => true})
+
+      {:ok, r, _} = Round.play(r, 0, {:discard, 1})
+      assert r.result.double_close
+      assert r.result.scores[0] == 100
+    end
+
+    test "the closing bonus is a setting" do
+      r =
+        round_with(%{0 => [c(1, 5, :red)], 1 => [c(2, 9, :red)]}, opened: %{0 => true, 1 => true})
+
+      r = %{r | rules: %{r.rules | closing_bonus: 100}}
+      {:ok, r, _} = Round.play(r, 0, {:discard, 1})
+      assert r.result.scores[0] == 100
+    end
+
     test "closing with a joker doubles the closer; a 1/joker atu doubles everyone" do
       hands = %{0 => [j(104)], 1 => [c(2, 9, :red)]}
       r = round_with(hands, opened: %{0 => true, 1 => true}, multiplier: 2)
       {:ok, r, _} = Round.play(r, 0, {:discard, 104})
-      assert r.result.joker_close
+      assert r.result.double_close
       assert r.result.scores == %{0 => 50 * 2 * 2, 1 => -5 * 2}
     end
 
@@ -362,7 +546,8 @@ defmodule Remybun.Engine.RoundTest do
       r =
         round_with(hands,
           opened: %{0 => true, 1 => false, 2 => false},
-          atu_holders: [2]
+          atu_holders: [2],
+          atu_announced: [2]
         )
 
       {:ok, r1, _} = Round.play(r, 0, {:discard, 1})
@@ -393,7 +578,8 @@ defmodule Remybun.Engine.RoundTest do
 
   defp all_tiles(%Round{} = r) do
     Enum.flat_map(r.hands, &elem(&1, 1)) ++
-      r.stock ++ r.discard ++ Enum.flat_map(r.melds, & &1.cards) ++ [r.atu]
+      r.stock ++
+      r.discard ++ Enum.flat_map(r.melds, & &1.cards) ++ if(r.atu_taken, do: [], else: [r.atu])
   end
 
   property "auto-played matches finish and conserve tiles" do
