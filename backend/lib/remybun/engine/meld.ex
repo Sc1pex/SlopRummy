@@ -2,10 +2,10 @@ defmodule Remybun.Engine.Meld do
   @moduledoc """
   Melds on the table.
 
-    * `:set` — 3 or 4 cards of the same `rank`, all different suits.
-    * `:run` — 3+ consecutive cards of one `suit`. Cards are stored in order and the
-      first card sits at position `start`. Positions go 1..14: 1 is a low Ace,
-      14 a high Ace. No wrap-around.
+    * `:set` — 3 or 4 cards of the same `rank`, all different colors.
+    * `:run` — 3+ consecutive cards of one `color`. Cards are stored in order and the
+      first card sits at position `start`. Positions go 1..14: 1 is a 1 before 2,
+      14 a 1 after 13. No wrap-around.
 
   Jokers keep the position they were placed at; adding cards to a run never moves
   an existing joker.
@@ -13,7 +13,7 @@ defmodule Remybun.Engine.Meld do
 
   alias Remybun.Engine.Card
 
-  defstruct [:id, :owner, :type, :rank, :suit, :start, cards: []]
+  defstruct [:id, :owner, :type, :rank, :color, :start, cards: []]
 
   @type t :: %__MODULE__{}
 
@@ -43,10 +43,10 @@ defmodule Remybun.Engine.Meld do
     fixed = run_slots(meld)
 
     candidates =
-      if Enum.all?(reals, &(&1.suit == meld.suit)) do
+      if Enum.all?(reals, &(&1.color == meld.color)) do
         for placement <- placements(reals),
             map_size(Map.take(fixed, Map.keys(placement))) == 0,
-            run <- [build_run(meld.suit, Map.merge(fixed, placement), jokers, max_jokers)],
+            run <- [build_run(meld.color, Map.merge(fixed, placement), jokers, max_jokers)],
             run != nil,
             do: %{run | id: meld.id, owner: meld.owner}
       else
@@ -84,11 +84,11 @@ defmodule Remybun.Engine.Meld do
   end
 
   defp can_replace?(%__MODULE__{type: :run} = meld, i, card) do
-    card.suit == meld.suit and rank_at(meld.start + i) == card.rank
+    card.color == meld.color and rank_at(meld.start + i) == card.rank
   end
 
   defp can_replace?(%__MODULE__{type: :set} = meld, _i, card) do
-    card.rank == meld.rank and card.suit not in Enum.map(meld.cards, & &1.suit)
+    card.rank == meld.rank and card.color not in Enum.map(meld.cards, & &1.color)
   end
 
   @doc "Point value of the meld (jokers count as the card they stand for)."
@@ -113,7 +113,7 @@ defmodule Remybun.Engine.Meld do
             map
 
           meld.type == :run ->
-            Map.put(map, :as, %{rank: rank_at(meld.start + i), suit: meld.suit})
+            Map.put(map, :as, %{rank: rank_at(meld.start + i), color: meld.color})
 
           true ->
             Map.put(map, :as, %{rank: meld.rank})
@@ -125,7 +125,7 @@ defmodule Remybun.Engine.Meld do
       owner: meld.owner,
       type: meld.type,
       rank: meld.rank,
-      suit: meld.suit,
+      color: meld.color,
       cards: cards,
       points: points(meld)
     }
@@ -142,12 +142,12 @@ defmodule Remybun.Engine.Meld do
 
   defp build_set(cards, max_jokers) do
     {jokers, reals} = Enum.split_with(cards, &Card.joker?/1)
-    suits = Enum.map(reals, & &1.suit)
+    colors = Enum.map(reals, & &1.color)
 
     with true <- length(cards) in 3..4,
          true <- reals != [] and length(jokers) <= max_jokers,
          [rank] <- reals |> Enum.map(& &1.rank) |> Enum.uniq(),
-         true <- Enum.uniq(suits) == suits do
+         true <- Enum.uniq(colors) == colors do
       # Real cards first, jokers last.
       %__MODULE__{type: :set, rank: rank, cards: reals ++ jokers}
     else
@@ -160,10 +160,10 @@ defmodule Remybun.Engine.Meld do
   defp run_candidates(cards, max_jokers) do
     {jokers, reals} = Enum.split_with(cards, &Card.joker?/1)
 
-    case Enum.uniq(Enum.map(reals, & &1.suit)) do
-      [suit] ->
+    case Enum.uniq(Enum.map(reals, & &1.color)) do
+      [color] ->
         for placement <- placements(reals),
-            run <- [build_run(suit, placement, jokers, max_jokers)],
+            run <- [build_run(color, placement, jokers, max_jokers)],
             run != nil,
             do: run
 
@@ -184,7 +184,7 @@ defmodule Remybun.Engine.Meld do
   end
 
   # `fixed` maps positions to cards; `free_jokers` fill gaps, then extend high, then low.
-  defp build_run(suit, fixed, free_jokers, max_jokers) when map_size(fixed) > 0 do
+  defp build_run(color, fixed, free_jokers, max_jokers) when map_size(fixed) > 0 do
     {low, high} = fixed |> Map.keys() |> Enum.min_max()
     gaps = for pos <- low..high, not Map.has_key?(fixed, pos), do: pos
 
@@ -200,7 +200,7 @@ defmodule Remybun.Engine.Meld do
         joker_count = Enum.count(cards, &Card.joker?/1)
 
         if length(cards) >= 3 and joker_count <= max_jokers and joker_count < length(cards) do
-          %__MODULE__{type: :run, suit: suit, start: start, cards: cards}
+          %__MODULE__{type: :run, color: color, start: start, cards: cards}
         end
       else
         _ -> nil
@@ -208,7 +208,7 @@ defmodule Remybun.Engine.Meld do
     end
   end
 
-  defp build_run(_suit, _fixed, _jokers, _max), do: nil
+  defp build_run(_color, _fixed, _jokers, _max), do: nil
 
   defp extend(slots, []), do: {:ok, slots}
 

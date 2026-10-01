@@ -1,23 +1,22 @@
 defmodule Remybun.Engine.Card do
   @moduledoc """
-  A playing card. Jokers have `rank: nil` and `suit: nil`.
-
-  Ranks are integers 1..13 (1 = Ace, 11 = Jack, 12 = Queen, 13 = King).
-  Every card in a game has a unique `id`, since the deck contains two copies of each card.
+  A Remi tile. Numbers (`rank`) go 1..13 in four colors; jokers have `rank: nil`
+  and `color: nil`. Every tile in a game has a unique `id`, since the set contains
+  two copies of each tile.
   """
 
-  @suits [:clubs, :diamonds, :hearts, :spades]
+  @colors [:black, :yellow, :red, :blue]
 
   @enforce_keys [:id]
-  defstruct [:id, :rank, :suit]
+  defstruct [:id, :rank, :color]
 
-  @type suit :: :clubs | :diamonds | :hearts | :spades
-  @type t :: %__MODULE__{id: non_neg_integer(), rank: 1..13 | nil, suit: suit() | nil}
+  @type color :: :black | :yellow | :red | :blue
+  @type t :: %__MODULE__{id: non_neg_integer(), rank: 1..13 | nil, color: color() | nil}
 
-  def suits, do: @suits
+  def colors, do: @colors
 
-  def new(id, rank, suit) when rank in 1..13 and suit in @suits,
-    do: %__MODULE__{id: id, rank: rank, suit: suit}
+  def new(id, rank, color) when rank in 1..13 and color in @colors,
+    do: %__MODULE__{id: id, rank: rank, color: color}
 
   def joker(id), do: %__MODULE__{id: id}
 
@@ -25,23 +24,23 @@ defmodule Remybun.Engine.Card do
   def joker?(%__MODULE__{}), do: false
 
   @doc """
-  Penalty value of a card held in hand: Ace 11, face cards 10, others face value,
-  jokers `joker_value`.
+  Penalty value of a tile left in hand: 2–9 are 5, 10–13 are 10, a 1 is 25,
+  a joker is `joker_value`.
   """
-  def hand_value(card, joker_value)
+  def hand_value(tile, joker_value)
   def hand_value(%__MODULE__{rank: nil}, joker_value), do: joker_value
-  def hand_value(%__MODULE__{rank: 1}, _), do: 11
-  def hand_value(%__MODULE__{rank: rank}, _) when rank >= 11, do: 10
-  def hand_value(%__MODULE__{rank: rank}, _), do: rank
+  def hand_value(%__MODULE__{rank: 1}, _), do: 25
+  def hand_value(%__MODULE__{rank: rank}, _) when rank >= 10, do: 10
+  def hand_value(%__MODULE__{}, _), do: 5
 
   @doc """
-  Value of a meld position (rank 1..14, where 1 is a low Ace and 14 a high Ace).
+  Value of a meld position, used for the opening total. Positions go 1..14:
+  1 is a 1 before 2, 14 is a 1 after 13 (worth 25, like a 1 in a set).
+  Other tiles are worth their number.
   """
-  def position_value(1), do: 1
-  def position_value(14), do: 11
-  def position_value(rank) when rank >= 11, do: 10
+  def position_value(14), do: 25
   def position_value(rank), do: rank
 
   def to_map(%__MODULE__{rank: nil, id: id}), do: %{id: id, joker: true}
-  def to_map(%__MODULE__{} = c), do: %{id: c.id, rank: c.rank, suit: c.suit, joker: false}
+  def to_map(%__MODULE__{} = c), do: %{id: c.id, rank: c.rank, color: c.color, joker: false}
 end

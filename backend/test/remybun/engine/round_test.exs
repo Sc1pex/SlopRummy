@@ -6,7 +6,7 @@ defmodule Remybun.Engine.RoundTest do
 
   @rules Rules.preset("classic")
 
-  defp c(id, rank, suit), do: Card.new(id, rank, suit)
+  defp c(id, rank, color), do: Card.new(id, rank, color)
 
   # A round in the discard phase for seat 0 with the given hands.
   defp round_with(hands, opts \\ []) do
@@ -15,7 +15,7 @@ defmodule Remybun.Engine.RoundTest do
     %Round{
       Round.new(@rules, seats, 0, Deck.new())
       | hands: hands,
-        stock: Keyword.get(opts, :stock, [c(900, 2, :clubs), c(901, 3, :clubs)]),
+        stock: Keyword.get(opts, :stock, [c(900, 2, :black), c(901, 3, :black)]),
         discard: Keyword.get(opts, :discard, []),
         opened: Keyword.get(opts, :opened, Map.new(0..(seats - 1), &{&1, false})),
         phase: Keyword.get(opts, :phase, :awaiting_discard)
@@ -24,11 +24,11 @@ defmodule Remybun.Engine.RoundTest do
 
   defp ids(cards), do: Enum.map(cards, & &1.id)
 
-  test "deals 15 cards to the starting seat and 14 to the others" do
+  test "deals 15 tiles to the starting seat and 14 to the others" do
     r = Round.new(@rules, 3, 1, Deck.shuffled())
     assert length(r.hands[1]) == 15
     assert length(r.hands[0]) == 14 and length(r.hands[2]) == 14
-    assert length(r.stock) == 108 - 43
+    assert length(r.stock) == 106 - 43
     assert r.current == 1 and r.phase == :awaiting_discard
   end
 
@@ -54,9 +54,9 @@ defmodule Remybun.Engine.RoundTest do
   describe "opening" do
     setup do
       # 10-J-Q of hearts (30) + three 5s (15) = 45
-      run = [c(1, 10, :hearts), c(2, 11, :hearts), c(3, 12, :hearts)]
-      set = [c(4, 5, :clubs), c(5, 5, :spades), c(6, 5, :diamonds)]
-      rest = [c(7, 9, :clubs), c(8, 2, :spades)]
+      run = [c(1, 10, :red), c(2, 11, :red), c(3, 12, :red)]
+      set = [c(4, 5, :black), c(5, 5, :blue), c(6, 5, :yellow)]
+      rest = [c(7, 9, :black), c(8, 2, :blue)]
       %{run: run, set: set, rest: rest}
     end
 
@@ -79,9 +79,9 @@ defmodule Remybun.Engine.RoundTest do
               id: 1,
               owner: 1,
               type: :run,
-              suit: :clubs,
+              color: :black,
               start: 6,
-              cards: [c(50, 6, :clubs), c(51, 7, :clubs), c(52, 8, :clubs)]
+              cards: [c(50, 6, :black), c(51, 7, :black), c(52, 8, :black)]
             }
           ]
       }
@@ -109,15 +109,15 @@ defmodule Remybun.Engine.RoundTest do
 
   describe "discard pickup (must_use)" do
     setup do
-      top = c(10, 13, :hearts)
+      top = c(10, 13, :red)
 
       hand = [
-        c(1, 11, :hearts),
-        c(2, 12, :hearts),
-        c(3, 7, :clubs),
-        c(4, 7, :spades),
-        c(5, 7, :diamonds),
-        c(6, 2, :clubs)
+        c(1, 11, :red),
+        c(2, 12, :red),
+        c(3, 7, :black),
+        c(4, 7, :blue),
+        c(5, 7, :yellow),
+        c(6, 2, :black)
       ]
 
       %{r: round_with(%{0 => hand, 1 => []}, phase: :awaiting_draw, discard: [top]), top: top}
@@ -156,12 +156,12 @@ defmodule Remybun.Engine.RoundTest do
       id: 1,
       owner: 1,
       type: :run,
-      suit: :clubs,
+      color: :black,
       start: 6,
-      cards: [c(50, 6, :clubs), joker, c(52, 8, :clubs)]
+      cards: [c(50, 6, :black), joker, c(52, 8, :black)]
     }
 
-    hand = [c(1, 7, :clubs), c(2, 9, :clubs), c(3, 10, :clubs), c(4, 2, :hearts)]
+    hand = [c(1, 7, :black), c(2, 9, :black), c(3, 10, :black), c(4, 2, :red)]
     r = %{round_with(%{0 => hand, 1 => []}, opened: %{0 => true, 1 => true}) | melds: [meld]}
 
     assert {:ok, r, [%{type: :swapped_joker}]} = Round.play(r, 0, {:swap_joker, 1, 1})
@@ -174,31 +174,31 @@ defmodule Remybun.Engine.RoundTest do
   describe "scoring" do
     test "going out: opened players pay their hand, unopened pay the flat penalty" do
       hands = %{
-        0 => [c(1, 5, :clubs)],
-        1 => [c(2, 1, :hearts), c(3, 13, :spades), Card.joker(104)],
-        2 => [c(4, 2, :clubs)]
+        0 => [c(1, 5, :black)],
+        1 => [c(2, 1, :red), c(3, 13, :blue), Card.joker(104)],
+        2 => [c(4, 2, :black)]
       }
 
       r = round_with(hands, opened: %{0 => true, 1 => true, 2 => false})
       {:ok, r, _} = Round.play(r, 0, {:discard, 1})
-      assert r.result.scores == %{0 => 0, 1 => 11 + 10 + 50, 2 => 100}
+      assert r.result.scores == %{0 => 0, 1 => 25 + 10 + 50, 2 => 100}
     end
 
     test "closing with a joker doubles everyone's penalty" do
-      hands = %{0 => [Card.joker(104)], 1 => [c(2, 9, :hearts)]}
+      hands = %{0 => [Card.joker(104)], 1 => [c(2, 9, :red)]}
       r = round_with(hands, opened: %{0 => true, 1 => true})
       {:ok, r, _} = Round.play(r, 0, {:discard, 104})
-      assert r.result.scores == %{0 => 0, 1 => 18}
+      assert r.result.scores == %{0 => 0, 1 => 2 * 5}
       assert r.result.joker_close
     end
   end
 
   describe "stock exhausted" do
     test "reshuffles the discard pile except its top card" do
-      discard = [c(10, 2, :clubs), c(11, 3, :clubs), c(12, 4, :clubs)]
+      discard = [c(10, 2, :black), c(11, 3, :black), c(12, 4, :black)]
 
       r =
-        round_with(%{0 => [c(1, 5, :clubs)], 1 => []},
+        round_with(%{0 => [c(1, 5, :black)], 1 => []},
           phase: :awaiting_draw,
           stock: [],
           discard: discard
@@ -213,10 +213,10 @@ defmodule Remybun.Engine.RoundTest do
 
     test "ends the round when nothing can be reshuffled" do
       r =
-        round_with(%{0 => [c(1, 5, :clubs)], 1 => [c(2, 6, :clubs)]},
+        round_with(%{0 => [c(1, 5, :black)], 1 => [c(2, 6, :black)]},
           phase: :awaiting_draw,
           stock: [],
-          discard: [c(3, 2, :clubs)]
+          discard: [c(3, 2, :black)]
         )
 
       assert {:ok, r, [%{type: :round_finished}]} = Round.play(r, 0, :draw_stock)
@@ -227,9 +227,9 @@ defmodule Remybun.Engine.RoundTest do
   describe "auto play" do
     test "returns an unused discard, draws and discards" do
       r =
-        round_with(%{0 => [c(1, 5, :clubs), c(2, 9, :hearts)], 1 => []},
+        round_with(%{0 => [c(1, 5, :black), c(2, 9, :red)], 1 => []},
           phase: :awaiting_draw,
-          discard: [c(3, 13, :spades)]
+          discard: [c(3, 13, :blue)]
         )
 
       {:ok, r, _} = Round.play(r, 0, :take_discard)
@@ -265,8 +265,8 @@ defmodule Remybun.Engine.RoundTest do
             :playing ->
               {:ok, m, _} = Match.auto_play(m)
               cards = all_cards(m.round)
-              assert length(cards) == 108
-              assert length(Enum.uniq_by(cards, & &1.id)) == 108
+              assert length(cards) == 106
+              assert length(Enum.uniq_by(cards, & &1.id)) == 106
               {:cont, m}
           end
         end)

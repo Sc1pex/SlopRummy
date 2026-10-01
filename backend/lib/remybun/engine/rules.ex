@@ -9,7 +9,7 @@ defmodule Remybun.Engine.Rules do
   defstruct min_players: 2,
             max_players: 4,
             hand_size: 14,
-            jokers: 4,
+            jokers: 2,
             opening_min_points: 45,
             discard_pickup: :must_use,
             max_jokers_per_meld: 1,
@@ -28,7 +28,8 @@ defmodule Remybun.Engine.Rules do
   @presets %{
     "classic" => %{
       name: "Classic",
-      description: "Remi etalat: 45-point opening, discard pickup must be used, 4 rounds."
+      description:
+        "Remi etalat: 106 tiles, 45-point opening, the taken tile must be used, 4 rounds."
     }
   }
 

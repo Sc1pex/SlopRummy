@@ -1,6 +1,6 @@
 # Remybun — Backend Specification
 
-Online platform for playing **Remi etalat** (Romanian card rummy).
+Online platform for playing **Remi etalat** (Romanian rummy with tiles on racks).
 
 - Backend: Elixir + Phoenix (JSON API + Phoenix Channels), Postgres via Ecto.
 - Frontend: separate app (to be decided).
@@ -19,7 +19,7 @@ The rules are snapshotted into every game so history always replays under the ru
 |---|---|---|---|
 | `min_players` / `max_players` | int | 2 / 4 | Seats at the table |
 | `hand_size` | int | 14 | Cards dealt; the starting player gets `hand_size + 1` and starts by discarding |
-| `jokers` | int | 4 | Jokers added to 2 × 52 cards |
+| `jokers` | int | 2 | Jokers added to the 104 numbered tiles |
 | `opening_min_points` | int | 45 | Minimum total value of the first lay-down |
 | `discard_pickup` | `:must_use \| :free` | `:must_use` | Top discard may only be taken if used in a meld that same turn |
 | `max_jokers_per_meld` | int | 1 | |
@@ -35,16 +35,18 @@ The rules are snapshotted into every game so history always replays under the ru
 
 ### Classic preset — the play
 
-- **Deck:** 2 × 52 + 4 jokers = 108 cards.
+- **Tiles:** numbers 1–13 in four colors (black, yellow, red, blue), two of each, + 2 jokers = 106 tiles.
+  (Internally a tile is `Card` with `rank` and `color`.)
 - **Turn:** draw (stock or top discard) → optionally lay down new melds / add to melds / swap jokers → discard one card.
   A taken discard can be returned (`return_discard`) as long as nothing else was done that turn.
   The starting player of a round skips the draw.
 - **Melds:**
-  - *Set*: 3–4 cards of the same rank, all different suits.
-  - *Run*: 3+ consecutive cards of one suit. Ace is low (A-2-3) or high (Q-K-A); no wrap-around (K-A-2 is invalid).
+  - *Set*: 3–4 tiles of the same number, all different colors.
+  - *Run*: 3+ consecutive tiles of one color. A 1 goes before 2 (1-2-3) or after 13 (12-13-1); no wrap-around (13-1-2 is invalid).
   - At most `max_jokers_per_meld` jokers per meld; a meld can't be all jokers.
-- **Card values (for opening & penalties):** 2–10 face value, J/Q/K = 10, Ace = 1 when low in a run, 11 otherwise (high run, set, or in hand).
-  A joker in a meld counts as the card it stands for; in hand it is worth `joker_penalty`.
+- **Opening value:** tiles count their number; a 1 counts 1 before a 2 and 25 after 13 or in a set of 1s.
+  A joker in a meld counts as the tile it stands for.
+- **Penalty for tiles left in hand:** 2–9 = 5, 10–13 = 10, 1 = 25, joker = `joker_penalty` (50).
 - **Opening:** the melds laid down in the turn a player first opens must total ≥ `opening_min_points`.
 - **After opening:** the player may add cards to any meld on the table and swap jokers.
 - **Going out:** a player goes out by discarding their last card (they must be able to discard — a player can never be left with 0 cards without discarding).
