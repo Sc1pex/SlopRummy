@@ -18,6 +18,7 @@ Online platform for playing **Remi etalat** (Romanian rummy with tiles on racks)
 | `opening_min_points` | 45 | Minimum points of the opening |
 | `max_jokers_per_meld` | 1 | 1 or 2 |
 | `joker_swap` | true | Opened players may swap a joker out of a meld for the tile it stands for |
+| `not_opened_penalty` | 100 | Points a player who never opened loses at the end of the round (instead of counting their hand) |
 | `match` | `{:rounds, 4}` | `{:rounds, n}`, `{:points_limit, n}` or `:single` |
 | `turn_timer_ms` | 60_000 | Per-turn limit; `nil` = off |
 
@@ -49,7 +50,8 @@ Rules snapshots are stored with every game; keys that are no longer settings are
 - **Scoring (higher is better):** tile values are 2–9 = 5, 10–13 = 10, 1 = 25. Per player: value of the
   tiles they laid − value of tiles left in hand; a joker is 50 either way (it counts as the tile it
   replaces only for the opening check)
-  + 50 for closing + 50 atu bonus.
+  + 50 for closing + 50 atu bonus. A player who never opened loses `not_opened_penalty` instead of
+  counting their hand.
   Then closing with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out, the round ends without a closing bonus.
 

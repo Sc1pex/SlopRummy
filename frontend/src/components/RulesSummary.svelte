@@ -17,6 +17,8 @@
   <dd>{rules.opening_min_points}</dd>
   <dt>{t('rules.max_players')}</dt>
   <dd>{rules.max_players}</dd>
+  <dt>{t('rules.not_opened_penalty')}</dt>
+  <dd>−{rules.not_opened_penalty}</dd>
   <dt>{t('rules.turn_timer')}</dt>
   <dd>{rules.turn_timer_ms ? t('rules.seconds', { n: rules.turn_timer_ms / 1000 }) : t('rules.off')}</dd>
 </dl>

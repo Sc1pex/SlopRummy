@@ -45,7 +45,9 @@
             <tr class:won={row.seat === result.winner}>
               <td class="name">{row.username}</td>
               <td class="tabular">{row.b?.laid ?? 0}</td>
-              <td class="tabular">{row.b ? -row.b.hand : 0}</td>
+              <td class="tabular">
+                {row.b ? -row.b.hand : 0}{#if row.b && !row.b.opened}<span class="tag"> {t('game.not_opened')}</span>{/if}
+              </td>
               <td class="tabular">
                 {row.b ? signed(row.b.closing + row.b.atu) : 0}{#if row.b && row.b.multiplier > 1}<span class="mult"> ×{row.b.multiplier}</span>{/if}
               </td>
@@ -128,6 +130,11 @@
 
   .strong {
     font-weight: 800;
+  }
+
+  .tag {
+    color: var(--muted);
+    font-size: 0.72rem;
   }
 
   .mult {

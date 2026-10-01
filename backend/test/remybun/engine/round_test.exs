@@ -321,7 +321,7 @@ defmodule Remybun.Engine.RoundTest do
       assert r.result.scores == %{0 => 30 + 50, 1 => 15 - 75 + 50}
 
       assert r.result.breakdown[1] ==
-               %{laid: 15, hand: 75, closing: 0, atu: 50, multiplier: 1, total: -10}
+               %{laid: 15, hand: 75, opened: true, closing: 0, atu: 50, multiplier: 1, total: -10}
     end
 
     test "a laid joker scores 50; tiles added to others' melds count for the adder" do
@@ -356,12 +356,31 @@ defmodule Remybun.Engine.RoundTest do
       assert r.result.scores == %{0 => 50 * 2 * 2, 1 => -5 * 2}
     end
 
+    test "a player who never opened pays the configurable penalty instead of their hand" do
+      hands = %{0 => [c(1, 5, :black)], 1 => [c(2, 1, :red), j(104)], 2 => [c(3, 6, :black)]}
+
+      r =
+        round_with(hands,
+          opened: %{0 => true, 1 => false, 2 => false},
+          atu_holders: [2]
+        )
+
+      {:ok, r1, _} = Round.play(r, 0, {:discard, 1})
+      assert r1.result.scores == %{0 => 50, 1 => -100, 2 => -100 + 50}
+      refute r1.result.breakdown[1].opened
+
+      r = %{r | rules: %{r.rules | not_opened_penalty: 200}}
+      {:ok, r2, _} = Round.play(r, 0, {:discard, 1})
+      assert r2.result.scores[1] == -200
+    end
+
     test "when the stock runs out the round ends without a closing bonus" do
       hands = %{0 => [c(1, 5, :black)], 1 => [c(2, 6, :black)]}
       r = round_with(hands, phase: :awaiting_draw, stock: [], discard: [c(3, 2, :black)])
       assert {:ok, r, [%{type: :round_finished}]} = Round.play(r, 0, :draw_stock)
       assert r.result.winner == nil
-      assert r.result.scores == %{0 => -5, 1 => -5}
+      # Nobody opened: each pays the flat penalty.
+      assert r.result.scores == %{0 => -100, 1 => -100}
     end
   end
 

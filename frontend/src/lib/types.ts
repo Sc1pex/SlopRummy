@@ -39,6 +39,7 @@ export interface Meld {
 export interface ScoreBreakdown {
   laid: number
   hand: number
+  opened: boolean
   closing: number
   atu: number
   multiplier: number
@@ -125,6 +126,7 @@ export interface Rules {
   opening_min_points: number
   max_jokers_per_meld: number
   joker_swap: boolean
+  not_opened_penalty: number
   match: MatchFormat
   turn_timer_ms: number | null
 }

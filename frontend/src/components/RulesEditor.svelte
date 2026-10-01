@@ -16,6 +16,7 @@
   const initial = untrack(() => rules)
   let opening = $state(initial.opening_min_points)
   let maxPlayers = $state(initial.max_players)
+  let notOpened = $state(initial.not_opened_penalty)
   let timer = $state(initial.turn_timer_ms === null ? 0 : initial.turn_timer_ms / 1000)
   let matchType = $state(initial.match.type)
   let matchN = $state('n' in initial.match ? initial.match.n : 4)
@@ -25,6 +26,7 @@
     onsave(preset, {
       opening_min_points: Number(opening),
       max_players: Number(maxPlayers),
+      not_opened_penalty: Number(notOpened),
       turn_timer_ms: Number(timer) === 0 ? null : Number(timer) * 1000,
       match: matchType === 'single' ? { type: 'single' } : { type: matchType, n: Number(matchN) },
     })
@@ -48,6 +50,10 @@
   <label>
     <span>{t('rules.opening_min_points')}</span>
     <input class="input" type="number" min="0" max="200" bind:value={opening} />
+  </label>
+  <label>
+    <span>{t('rules.not_opened_penalty')}</span>
+    <input class="input" type="number" min="0" max="1000" step="10" bind:value={notOpened} />
   </label>
   <label>
     <span>{t('rules.max_players')}</span>

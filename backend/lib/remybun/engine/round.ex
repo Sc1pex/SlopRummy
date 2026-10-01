@@ -36,7 +36,8 @@ defmodule Remybun.Engine.Round do
 
   ## Scoring
   Per player: value of the tiles they laid minus the tiles left in hand (2–9 = 5,
-  10–13 = 10, 1 = 25, joker = 50 either way), plus the closing bonus and the atu bonus. Then closing
+  10–13 = 10, 1 = 25, joker = 50 either way); a player who never opened pays
+  `not_opened_penalty` instead of counting their hand, plus the closing bonus and the atu bonus. Then closing
   with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out the round ends and nobody gets the closing bonus.
 
@@ -529,8 +530,12 @@ defmodule Remybun.Engine.Round do
       Map.new(0..(r.seats - 1), fn seat ->
         laid_points = Map.get(laid, seat, 0)
 
+        # A player who never opened pays a flat penalty instead of counting their hand.
         hand_points =
-          r.hands[seat] |> Enum.map(&Card.hand_value(&1, Rules.joker_penalty())) |> Enum.sum()
+          if r.opened[seat],
+            do:
+              r.hands[seat] |> Enum.map(&Card.hand_value(&1, Rules.joker_penalty())) |> Enum.sum(),
+            else: r.rules.not_opened_penalty
 
         closing = if seat == closer, do: Rules.closing_bonus(), else: 0
         atu = if seat in r.atu_holders, do: Rules.atu_bonus(), else: 0
@@ -541,6 +546,7 @@ defmodule Remybun.Engine.Round do
          %{
            laid: laid_points,
            hand: hand_points,
+           opened: r.opened[seat],
            closing: closing,
            atu: atu,
            multiplier: multiplier,

@@ -15,6 +15,7 @@ defmodule Remybun.Engine.Rules do
             opening_min_points: 45,
             max_jokers_per_meld: 1,
             joker_swap: true,
+            not_opened_penalty: 100,
             match: {:rounds, 4},
             turn_timer_ms: 60_000
 
@@ -81,7 +82,7 @@ defmodule Remybun.Engine.Rules do
     end)
   end
 
-  @int_fields ~w(min_players max_players opening_min_points max_jokers_per_meld)
+  @int_fields ~w(min_players max_players opening_min_points max_jokers_per_meld not_opened_penalty)
   @fields @int_fields ++ ~w(joker_swap turn_timer_ms match)
 
   defp cast(key, v) when key in @int_fields and is_integer(v) and v >= 0,

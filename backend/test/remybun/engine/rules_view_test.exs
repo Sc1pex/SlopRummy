@@ -6,9 +6,14 @@ defmodule Remybun.Engine.RulesViewTest do
   describe "rules" do
     test "builds a preset with JSON overrides" do
       assert {:ok, r} =
-               Rules.build("classic", %{"opening_min_points" => 51, "joker_swap" => false})
+               Rules.build("classic", %{
+                 "opening_min_points" => 51,
+                 "joker_swap" => false,
+                 "not_opened_penalty" => 150
+               })
 
       assert r.opening_min_points == 51 and r.joker_swap == false
+      assert r.not_opened_penalty == 150
 
       assert {:ok, %Rules{match: :single}} =
                Rules.build("classic", %{"match" => %{"type" => "single"}})
@@ -27,7 +32,7 @@ defmodule Remybun.Engine.RulesViewTest do
 
     test "ignores settings removed since a snapshot was stored" do
       old = %{"discard_pickup" => "must_use", "atu" => "off", "opening_min_points" => 51}
-      assert {:ok, %Rules{opening_min_points: 51}} = Rules.from_map(old)
+      assert {:ok, %Rules{opening_min_points: 51, not_opened_penalty: 100}} = Rules.from_map(old)
     end
 
     test "round-trips through a JSON map" do
