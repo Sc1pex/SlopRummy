@@ -8,7 +8,8 @@ defmodule Remybun.Engine.MeldTest do
 
   describe "build/2 sets" do
     test "three of a kind with different suits" do
-      assert {:ok, %Meld{type: :set, rank: 7}} = Meld.build([c(7, :hearts), c(7, :spades), c(7, :clubs)], 1)
+      assert {:ok, %Meld{type: :set, rank: 7}} =
+               Meld.build([c(7, :hearts), c(7, :spades), c(7, :clubs)], 1)
     end
 
     test "rejects duplicate suits" do
@@ -21,7 +22,9 @@ defmodule Remybun.Engine.MeldTest do
     end
 
     test "with a joker" do
-      assert {:ok, %Meld{type: :set, rank: 9} = m} = Meld.build([c(9, :hearts), j(), c(9, :clubs)], 1)
+      assert {:ok, %Meld{type: :set, rank: 9} = m} =
+               Meld.build([c(9, :hearts), j(), c(9, :clubs)], 1)
+
       assert Meld.points(m) == 27
     end
 
@@ -46,10 +49,14 @@ defmodule Remybun.Engine.MeldTest do
     end
 
     test "low and high aces, no wrap-around" do
-      assert {:ok, %Meld{start: 1} = low} = Meld.build([c(1, :clubs), c(2, :clubs), c(3, :clubs)], 1)
+      assert {:ok, %Meld{start: 1} = low} =
+               Meld.build([c(1, :clubs), c(2, :clubs), c(3, :clubs)], 1)
+
       assert Meld.points(low) == 6
 
-      assert {:ok, %Meld{start: 12} = high} = Meld.build([c(12, :clubs), c(13, :clubs), c(1, :clubs)], 1)
+      assert {:ok, %Meld{start: 12} = high} =
+               Meld.build([c(12, :clubs), c(13, :clubs), c(1, :clubs)], 1)
+
       assert Meld.points(high) == 31
 
       assert {:error, _} = Meld.build([c(13, :clubs), c(1, :clubs), c(2, :clubs)], 1)

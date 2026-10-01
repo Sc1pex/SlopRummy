@@ -109,9 +109,14 @@ defmodule Remybun.Engine.Meld do
         map = Card.to_map(card)
 
         cond do
-          not Card.joker?(card) -> map
-          meld.type == :run -> Map.put(map, :as, %{rank: rank_at(meld.start + i), suit: meld.suit})
-          true -> Map.put(map, :as, %{rank: meld.rank})
+          not Card.joker?(card) ->
+            map
+
+          meld.type == :run ->
+            Map.put(map, :as, %{rank: rank_at(meld.start + i), suit: meld.suit})
+
+          true ->
+            Map.put(map, :as, %{rank: meld.rank})
         end
       end)
 

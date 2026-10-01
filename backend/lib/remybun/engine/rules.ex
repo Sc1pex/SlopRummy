@@ -58,10 +58,17 @@ defmodule Remybun.Engine.Rules do
     r
     |> Map.from_struct()
     |> Map.new(fn
-      {:match, {type, n}} -> {"match", %{"type" => Atom.to_string(type), "n" => n}}
-      {:match, :single} -> {"match", %{"type" => "single"}}
-      {k, v} when is_atom(v) and not is_boolean(v) and not is_nil(v) -> {Atom.to_string(k), Atom.to_string(v)}
-      {k, v} -> {Atom.to_string(k), v}
+      {:match, {type, n}} ->
+        {"match", %{"type" => Atom.to_string(type), "n" => n}}
+
+      {:match, :single} ->
+        {"match", %{"type" => "single"}}
+
+      {k, v} when is_atom(v) and not is_boolean(v) and not is_nil(v) ->
+        {Atom.to_string(k), Atom.to_string(v)}
+
+      {k, v} ->
+        {Atom.to_string(k), v}
     end)
   end
 
@@ -115,14 +122,29 @@ defmodule Remybun.Engine.Rules do
   @doc "Checks that the combination of fields makes a playable game."
   def validate(%__MODULE__{} = r) do
     cond do
-      r.min_players < 2 -> {:error, {:invalid_rule, "min_players"}}
-      r.max_players > 6 or r.max_players < r.min_players -> {:error, {:invalid_rule, "max_players"}}
-      r.hand_size < 7 or r.hand_size > 20 -> {:error, {:invalid_rule, "hand_size"}}
-      r.max_players * r.hand_size + 1 > 104 + r.jokers - 10 -> {:error, {:invalid_rule, "hand_size"}}
-      r.jokers > 8 -> {:error, {:invalid_rule, "jokers"}}
-      r.max_jokers_per_meld < 1 -> {:error, {:invalid_rule, "max_jokers_per_meld"}}
-      r.joker_close_multiplier < 1 -> {:error, {:invalid_rule, "joker_close_multiplier"}}
-      true -> {:ok, r}
+      r.min_players < 2 ->
+        {:error, {:invalid_rule, "min_players"}}
+
+      r.max_players > 6 or r.max_players < r.min_players ->
+        {:error, {:invalid_rule, "max_players"}}
+
+      r.hand_size < 7 or r.hand_size > 20 ->
+        {:error, {:invalid_rule, "hand_size"}}
+
+      r.max_players * r.hand_size + 1 > 104 + r.jokers - 10 ->
+        {:error, {:invalid_rule, "hand_size"}}
+
+      r.jokers > 8 ->
+        {:error, {:invalid_rule, "jokers"}}
+
+      r.max_jokers_per_meld < 1 ->
+        {:error, {:invalid_rule, "max_jokers_per_meld"}}
+
+      r.joker_close_multiplier < 1 ->
+        {:error, {:invalid_rule, "joker_close_multiplier"}}
+
+      true ->
+        {:ok, r}
     end
   end
 end
