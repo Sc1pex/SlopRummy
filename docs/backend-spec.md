@@ -37,6 +37,7 @@ The rules are snapshotted into every game so history always replays under the ru
 
 - **Deck:** 2 × 52 + 4 jokers = 108 cards.
 - **Turn:** draw (stock or top discard) → optionally lay down new melds / add to melds / swap jokers → discard one card.
+  A taken discard can be returned (`return_discard`) as long as nothing else was done that turn.
   The starting player of a round skips the draw.
 - **Melds:**
   - *Set*: 3–4 cards of the same rank, all different suits.
@@ -94,10 +95,15 @@ No processes, no DB. Fully unit/property tested.
 |---|---|
 | `users` | id, username, email (nullable for guests), hashed_password, guest (bool), timestamps |
 | `users_tokens` | id, user_id, token, context, timestamps |
-| `tables` | id, invite_code, visibility (`public`/`private`), host_id, rules (jsonb), status (`waiting`/`playing`/`finished`), timestamps |
-| `games` | id, table_id, rules (jsonb snapshot), started_at, finished_at, winner_id |
+| `tables` | id, invite_code, visibility (`public`/`private`), preset, host_id, rules (jsonb), status (`waiting`/`playing`/`closed`), timestamps |
+| `games` | id, table_id, rules (jsonb snapshot), status (`playing`/`finished`/`abandoned`), started_at, finished_at, winner_id |
 | `game_players` | id, game_id, user_id, seat, final_score |
 | `game_events` | id, game_id, seq, type, payload (jsonb), inserted_at |
+
+`game_events` holds the public events plus server-only entries: `deal` (full deck order) and
+`action` (the raw action each seat took), so games can be audited.
+
+Tables are closed after being idle (no connections) for 5 minutes; a game in progress is marked `abandoned`.
 
 Guests are `users` rows with `guest: true` and a generated username (`Guest-4821`). A guest can upgrade to a full account by setting email/password, keeping history.
 
@@ -122,10 +128,10 @@ Guests are `users` rows with `guest: true` and a generated username (`Guest-4821
 ### Socket: `/socket/websocket?token=<token>`
 
 **`lobby`**
-- push `tables` — list of public tables; updated with `tables_updated`.
+- join reply `{tables}` — public tables; then pushes `table_updated` (summary) and `table_closed` (`{code}`).
 - Presence for online users.
 
-**`table:<table_id>`**
+**`table:<invite_code>`** — join reply: `{state}`
 
 Client → server (reply `{:ok, ...}` or `{:error, %{reason}}`):
 | Event | Payload |
@@ -137,6 +143,7 @@ Client → server (reply `{:ok, ...}` or `{:error, %{reason}}`):
 | `start` | — (host) |
 | `draw_stock` | — |
 | `take_discard` | — |
+| `return_discard` | — |
 | `lay_down` | `{melds: [[card_id, ...], ...]}` |
 | `add_to_meld` | `{meld_id, cards: [card_id, ...]}` |
 | `swap_joker` | `{meld_id, card: card_id}` |
@@ -146,9 +153,20 @@ Client → server (reply `{:ok, ...}` or `{:error, %{reason}}`):
 Server → client:
 | Event | Payload |
 |---|---|
-| `state` | Full per-player snapshot (sent on join and after each change) |
-| `event` | Public event (`drew_stock`, `took_discard`, `laid_down`, `discarded`, `round_finished`, …) |
-| `chat` | `{user, text}` |
+| `update` | `{events, state}` after every change. `events` are public (`round_started`, `drew_stock`, `took_discard`, `returned_discard`, `laid_down`, `added_to_meld`, `swapped_joker`, `discarded`, `turn`, `stock_reshuffled`, `round_finished`, `match_finished`, `rules_updated`); `state` is the per-player snapshot |
+| `chat` | `{user_id, username, text}` |
+
+`state` contains: `code, visibility, preset, rules, host_id, status, seats[], players[], my_seat,
+game (rounds_played, totals, last_result, round{phase, current, stock_count, discard_top, melds,
+opened, hand_counts, hand, must_use, result}), turn_deadline (unix ms), last_result`.
+Seats in `game` and `events` are match seats, i.e. indexes into `players`.
+
+Error replies carry `{reason}`, e.g. `not_your_turn`, `wrong_phase`, `opening_too_low`,
+`must_use_discard`, `must_use_joker`, `must_keep_card_to_discard`, `invalid_meld`, `invalid_payload`.
+
+Timers: with `turn_timer_ms` set, the server auto-plays (draw, discard highest card) on timeout.
+With the timer off, a disconnected current player is auto-played after 60s.
+Between rounds there is an 8s pause.
 
 **Hidden information:** the server never sends another player's hand or the stock order.
 
