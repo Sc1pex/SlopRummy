@@ -12,8 +12,9 @@ defmodule Remybun.Application do
       Remybun.Repo,
       {DNSCluster, query: Application.get_env(:remybun, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Remybun.PubSub},
-      # Start a worker by calling: Remybun.Worker.start_link(arg)
-      # {Remybun.Worker, arg},
+      RemybunWeb.Presence,
+      {Registry, keys: :unique, name: Remybun.Tables.Registry},
+      {DynamicSupervisor, name: Remybun.Tables.Supervisor, strategy: :one_for_one},
       # Start to serve requests, typically the last entry
       RemybunWeb.Endpoint
     ]

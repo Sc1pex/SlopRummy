@@ -18,6 +18,10 @@ defmodule RemybunWeb.Router do
     post "/guest", AuthController, :guest
     post "/register", AuthController, :register
     post "/login", AuthController, :login
+
+    get "/presets", TableController, :presets
+    get "/tables", TableController, :index
+    get "/tables/:code", TableController, :show
   end
 
   scope "/api", RemybunWeb do
@@ -25,5 +29,7 @@ defmodule RemybunWeb.Router do
 
     delete "/logout", AuthController, :logout
     get "/me", AuthController, :me
+    get "/me/games", GameController, :history
+    post "/tables", TableController, :create
   end
 end

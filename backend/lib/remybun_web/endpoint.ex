@@ -11,9 +11,9 @@ defmodule RemybunWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  # socket "/live", Phoenix.LiveView.Socket,
-  #   websocket: [connect_info: [session: @session_options]],
-  #   longpoll: [connect_info: [session: @session_options]]
+  socket "/socket", RemybunWeb.UserSocket,
+    websocket: [check_origin: {RemybunWeb.Endpoint, :check_origin?, []}],
+    longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -50,4 +50,7 @@ defmodule RemybunWeb.Endpoint do
   plug RemybunWeb.Router
 
   def cors_origins, do: Application.get_env(:remybun, :cors_origins, ["http://localhost:5173"])
+
+  @doc false
+  def check_origin?(%URI{} = uri), do: URI.to_string(%{uri | path: nil}) in cors_origins()
 end

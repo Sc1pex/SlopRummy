@@ -23,6 +23,10 @@ end
 config :remybun, RemybunWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+if origins = System.get_env("CORS_ORIGINS") do
+  config :remybun, :cors_origins, String.split(origins, ",", trim: true)
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

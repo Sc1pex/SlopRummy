@@ -32,3 +32,8 @@ config :phoenix,
 
 # Only in tests, remove the complexity from the password hashing algorithm
 config :bcrypt_elixir, :log_rounds, 1
+
+config :remybun,
+  next_round_delay_ms: 20,
+  idle_timeout_ms: 60_000,
+  disconnect_grace_ms: 60_000
