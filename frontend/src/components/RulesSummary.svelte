@@ -17,6 +17,8 @@
   <dd>{rules.opening_min_points}</dd>
   <dt>{t('rules.max_players')}</dt>
   <dd>{rules.max_players}</dd>
+  <dt>{t('rules.closing_bonus')}</dt>
+  <dd>+{rules.closing_bonus}</dd>
   <dt>{t('rules.not_opened_penalty')}</dt>
   <dd>−{rules.not_opened_penalty}</dd>
   <dt>{t('rules.turn_timer')}</dt>

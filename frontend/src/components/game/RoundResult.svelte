@@ -26,7 +26,7 @@
   <div class="panel card" transition:scale={{ start: 0.92, duration: 180 }}>
     <h2>{t('game.round_over')}</h2>
     <p class="winner">{winner ? `🎉 ${t('game.winner', { name: winner.username })}` : t('game.no_winner')}</p>
-    {#if result.joker_close}<p class="note">☺ {t('game.joker_close')}</p>{/if}
+    {#if result.double_close}<p class="note">☺ {t('game.joker_close')}</p>{/if}
     {#if result.atu_multiplier > 1 && atu}<p class="note">{t('game.round_double', { tile: tileLabel(atu) })}</p>{/if}
     <div class="scroll">
       <table>

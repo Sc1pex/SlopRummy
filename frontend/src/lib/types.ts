@@ -48,7 +48,7 @@ export interface ScoreBreakdown {
 
 export interface RoundResult {
   winner: number | null
-  joker_close: boolean
+  double_close: boolean
   atu_multiplier: number
   scores: Record<string, number>
   breakdown: Record<string, ScoreBreakdown>
@@ -84,14 +84,18 @@ export interface RoundView {
   blocked_discard: number | null
   atu: Tile
   atu_multiplier: number
-  atu_holders: number[]
+  atu_announced: number[]
+  atu_taken: boolean
+  can_announce_atu: boolean
+  /** Seats that hold 3 or fewer tiles (announced automatically). */
+  last_tiles: number[]
   melds: Meld[]
   opened: Record<string, boolean>
   first_turn: Record<string, boolean>
   hand_counts: Record<string, number>
   hand: Tile[] | null
   /** Only on the viewer's own turn. */
-  turn: { pending_joker: number | null; opened_now: boolean } | null
+  turn: { pending_joker: number | null; opened_now: boolean; small_hand: boolean } | null
   exchange: ExchangeView | null
   result: RoundResult | null
 }
@@ -127,6 +131,7 @@ export interface Rules {
   max_jokers_per_meld: number
   joker_swap: boolean
   not_opened_penalty: number
+  closing_bonus: number
   match: MatchFormat
   turn_timer_ms: number | null
 }

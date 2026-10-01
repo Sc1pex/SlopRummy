@@ -69,19 +69,29 @@
   // ---- Taking from the discard pile ----
   // Tapping a takeable tile puts it (and, for opened players, every tile after it) on the
   // rack provisionally. The take is only sent together with the melds that use the tile.
-  let taking = $state<{ tile: number; ids: number[] } | null>(null)
+  // The atu can be taken the same way, but only to close.
+  let taking = $state<{ kind: 'discard' | 'atu'; tile: number; ids: number[] } | null>(null)
 
+  // Last tiles: with 3 only the last discard, with 1–2 none. Deeper needs opened + 4 tiles.
   function takeable(index: number): boolean {
     if (!drawPhase || firstTurn || !round) return false
-    if (discard[index].id === round.blocked_discard) return false
-    return opened || index === discard.length - 1
+    if (discard[index].id === round.blocked_discard || hand.length <= 2) return false
+    return index === discard.length - 1 || (opened && hand.length >= 4)
   }
 
   function startTake(index: number) {
     if (!takeable(index)) return
     const ids = discard.slice(index).map((t) => t.id)
-    taking = { tile: ids[0], ids }
+    taking = { kind: 'discard', tile: ids[0], ids }
     selected = [ids[0]]
+  }
+
+  const atuTakeable = $derived(playPhase && !firstTurn && !!round && !round.atu_taken && !taking)
+
+  function startAtu() {
+    if (!atuTakeable || !round) return
+    taking = { kind: 'atu', tile: round.atu.id, ids: [round.atu.id] }
+    selected = [round.atu.id]
   }
 
   function cancelTake() {
@@ -90,10 +100,13 @@
   }
 
   $effect(() => {
-    if (!drawPhase && taking) taking = null
+    if (taking && !(taking.kind === 'discard' ? drawPhase : playPhase)) taking = null
   })
 
-  const takenTiles = $derived(taking ? discard.filter((t) => taking!.ids.includes(t.id)) : [])
+  const takenTiles = $derived.by(() => {
+    if (!taking || !round) return []
+    return taking.kind === 'atu' ? [round.atu] : discard.filter((t) => taking!.ids.includes(t.id))
+  })
   const rackTiles = $derived([...hand, ...takenTiles])
   const rackIds = $derived(rackTiles.map((t) => t.id))
   const byId = $derived(new Map(rackTiles.map((t) => [t.id, t])))
@@ -138,8 +151,12 @@
   )
   const groupsValid = $derived(groups.length > 0 && groups.every((g, i) => g.length >= 3 && groupPoints[i] !== null))
   const layDownPoints = $derived(groupPoints.reduce<number>((sum, p) => sum + (p ?? 0), 0))
+  // With 3 tiles or fewer at the start of the turn: only additions to melds on the table.
+  const smallHand = $derived(playPhase && !taking ? !!round?.turn?.small_hand : hand.length <= 3)
   const canMeld = $derived(!firstTurn && (playPhase || !!taking))
-  const canLayDown = $derived(canMeld && groupsValid && (!taking || selected.includes(taking.tile)))
+  const canLayDown = $derived(
+    canMeld && !smallHand && groupsValid && (!taking || selected.includes(taking.tile)),
+  )
   const canTargetMelds = $derived(canMeld && selected.length > 0 && opened && !openedNow)
 
   // ---- Actions ----
@@ -155,9 +172,11 @@
 
   async function layDown() {
     if (!groupsValid) return toast(errorText('invalid_meld'), 'error')
-    const ok = taking
-      ? await act('take_discard', { card: taking.tile, melds: groups })
-      : await act('lay_down', { melds: groups })
+    const ok = !taking
+      ? await act('lay_down', { melds: groups })
+      : taking.kind === 'atu'
+        ? await act('take_atu', { melds: groups })
+        : await act('take_discard', { card: taking.tile, melds: groups })
     if (ok) {
       taking = null
       selected = []
@@ -172,10 +191,13 @@
   async function tapMeld(meld: Meld) {
     if (!canTargetMelds) return
     let ok: boolean
-    if (taking) {
-      ok = await act('take_discard', { card: taking.tile, additions: [{ meld_id: meld.id, cards: selected }] })
-    } else if (selected.length === 1 && rules.joker_swap && jokerMatch(meld, byId.get(selected[0])!)) {
-      ok = await act('swap_joker', { meld_id: meld.id, card: selected[0] })
+    const additions = [{ meld_id: meld.id, cards: selected }]
+    if (taking?.kind === 'atu') {
+      ok = await act('take_atu', { additions })
+    } else if (taking) {
+      ok = await act('take_discard', { card: taking.tile, additions })
+    } else if (rules.joker_swap && jokerSwap(meld, selected.map((id) => byId.get(id)!))) {
+      ok = await act('swap_joker', { meld_id: meld.id, cards: selected })
     } else {
       ok = await act('add_to_meld', { meld_id: meld.id, cards: selected })
     }
@@ -185,14 +207,25 @@
     }
   }
 
-  /** Whether `tile` is the real tile a joker in `meld` stands for. */
-  function jokerMatch(meld: Meld, tile: TileT): boolean {
-    if (tile.joker) return false
-    return meld.cards.some((c) => {
-      if (!c.joker || !c.as || c.as.rank !== tile.rank) return false
-      if (meld.type === 'run') return c.as.color === tile.color
-      return !meld.cards.some((o) => !o.joker && o.color === tile.color)
-    })
+  /**
+   * Whether `tiles` take a joker back from `meld`: in a run the tile the joker stands for;
+   * in a set of 4 the missing color; in a set of 3 both missing colors.
+   */
+  function jokerSwap(meld: Meld, tiles: TileT[]): boolean {
+    if (!meld.cards.some((c) => c.joker) || tiles.some((t) => !t || t.joker)) return false
+    const real = tiles as { rank: number; color: string }[]
+    if (meld.type === 'run') {
+      const [tile] = real
+      return real.length === 1 && meld.cards.some((c) => c.joker && c.as?.rank === tile.rank && c.as?.color === tile.color)
+    }
+    const present = meld.cards.flatMap((c) => (c.joker ? [] : [c.color]))
+    const colors = real.map((t) => t.color)
+    return (
+      real.length === (meld.cards.length === 3 ? 2 : 1) &&
+      real.every((t) => t.rank === meld.rank) &&
+      new Set(colors).size === colors.length &&
+      colors.every((c) => !present.includes(c as never))
+    )
   }
 
   // ---- Melds grouped by owner ----
@@ -208,8 +241,11 @@
     if (!myTurn) return currentPlayer ? t('game.turn_of', { name: currentPlayer.username }) : ''
     if (firstTurn) return t('game.first_turn')
     if (pendingJoker) return t('game.must_use_joker')
+    if (taking?.kind === 'atu') return t('game.atu_hint')
     if (taking) return t('game.take_hint')
+    if (drawPhase && hand.length <= 2) return t('game.small_hand_draw')
     if (drawPhase) return t('game.draw_hint')
+    if (smallHand) return t('game.small_hand')
     if (openedNow) return t('game.opening_turn')
     if (!opened) return t('game.opening_rule', { n: rules.opening_min_points })
     if (canTargetMelds) return t('game.select_meld_hint')
@@ -220,6 +256,17 @@
   let lastAtu = $state<TileT | null>(null)
   $effect(() => {
     if (round?.atu) lastAtu = round.atu
+  })
+
+  // Announce other players dropping to their last tiles.
+  $effect(() => {
+    conn.eventSeq
+    for (const e of untrack(() => conn.lastEvents)) {
+      if (e.type === 'last_tiles' && e.seat !== mySeat) {
+        const name = table.players[e.seat as number]?.username ?? '?'
+        toast(t('game.last_tiles_toast', { name, n: e.count as number }))
+      }
+    }
   })
 
   // ---- Menu / chat ----
@@ -249,6 +296,7 @@
               <span class="count-tiles"><i></i>{round?.hand_counts[p.seat] ?? 0}</span>
               <span title="score">Σ {game.totals[p.seat] ?? 0}</span>
               {#if round?.opened[p.seat]}<span class="badge badge-ok">{t('game.opened')}</span>{/if}
+              {#if round?.last_tiles.includes(p.seat)}<span class="badge badge-accent">{t('game.last_tiles')}</span>{/if}
               {#if !p.connected}<span class="badge">{t('game.offline')}</span>{/if}
             </div>
           </div>
@@ -282,10 +330,18 @@
         <span class="count tabular">{round?.stock_count ?? 0}</span>
       </button>
       {#if round?.atu}
-        <div class="atu" style:--tile-h="{Math.round(pileTileH * 0.7)}px" title={t('game.atu')}>
+        <button
+          class="atu"
+          class:active={atuTakeable}
+          class:used={round.atu_taken || taking?.kind === 'atu'}
+          disabled={!atuTakeable}
+          onclick={startAtu}
+          style:--tile-h="{Math.round(pileTileH * 0.7)}px"
+          title={t('game.atu')}
+        >
           <Tile tile={round.atu} />
           <span class="atu-label">{t('game.atu')}{round.atu_multiplier > 1 ? ' ×2' : ''}</span>
-        </div>
+        </button>
       {/if}
     </div>
 
@@ -356,9 +412,11 @@
           {#if taking}
             <button class="btn btn-ghost btn-sm" onclick={cancelTake}>{t('game.cancel_take')}</button>
           {/if}
-          {#if canMeld && selected.length >= 3}
+          {#if canMeld && !smallHand && selected.length >= 3}
             <button class="btn btn-primary btn-sm" disabled={!canLayDown} onclick={layDown}>
-              {taking ? t('game.take_lay_down') : t('game.lay_down')}{groupsValid ? ` · ${layDownPoints}` : ''}
+              {taking?.kind === 'atu' ? t('game.take_atu') : taking ? t('game.take_lay_down') : t('game.lay_down')}{groupsValid
+                ? ` · ${layDownPoints}`
+                : ''}
             </button>
           {/if}
           {#if playPhase && selected.length === 1}
@@ -655,6 +713,23 @@
     flex-direction: column;
     align-items: center;
     gap: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .atu:disabled {
+    cursor: default;
+  }
+
+  .atu.active :global(.tile) {
+    box-shadow:
+      inset 0 -3px 0 #d8ccb2,
+      0 0 0 2px var(--accent);
+  }
+
+  .atu.used {
+    opacity: 0.35;
   }
 
   .atu-label {

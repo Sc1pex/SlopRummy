@@ -179,9 +179,18 @@
     </div>
   </div>
 
+  {#if round.atu_announced.length}
+    <p class="small muted">
+      {round.atu_announced.map((s) => t('exchange.atu_announced', { name: nameOf(s) })).join(' · ')}
+    </p>
+  {/if}
+
   {#if mySeat !== null}
     <footer>
       <span class="muted small">{t('exchange.waiting', { done: exchange.done.length, total: players.length })}</span>
+      {#if round.can_announce_atu}
+        <button class="btn btn-sm" onclick={() => act('announce_atu')}>{t('exchange.announce_atu')}</button>
+      {/if}
       {#if exchange.can_refuse}
         <button class="btn btn-sm btn-danger" onclick={refuse}>{t('exchange.refuse')}</button>
       {/if}
