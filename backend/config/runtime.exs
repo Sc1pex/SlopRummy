@@ -23,8 +23,10 @@ end
 config :remybun, RemybunWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-if origins = System.get_env("CORS_ORIGINS") do
-  config :remybun, :cors_origins, String.split(origins, ",", trim: true)
+cors_origins = System.get_env("CORS_ORIGINS", "") |> String.split(",", trim: true)
+
+if cors_origins != [] do
+  config :remybun, :cors_origins, cors_origins
 end
 
 if config_env() == :prod do
@@ -58,6 +60,12 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
+
+  # The frontend is served from the same domain; allow its origin for the API and socket
+  # unless CORS_ORIGINS overrides it.
+  if cors_origins == [] do
+    config :remybun, :cors_origins, ["https://#{host}"]
+  end
 
   config :remybun, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 

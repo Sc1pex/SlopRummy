@@ -30,3 +30,14 @@ Tests: `cd backend && mix test`, `cd frontend && npm test && npm run check`.
   selected cards (or swap a joker), select one card to **Discard**.
 - Production build: `npm run build` → `frontend/dist/` (static). Set `VITE_API_URL` to the backend
   origin when they are served from different hosts, and `CORS_ORIGINS` on the backend.
+
+## Deployment (Dokploy)
+
+`docker-compose.prod.yml` runs Postgres, the Phoenix release (migrations run on start) and an
+nginx container that serves the frontend and proxies `/api` and `/socket` to the backend.
+
+1. Dokploy → Create Service → **Compose** → Git provider → this repository, branch `main`,
+   compose path `./docker-compose.prod.yml`.
+2. **Environment**: `PHX_HOST`, `SECRET_KEY_BASE` (`openssl rand -base64 48`), `POSTGRES_PASSWORD`.
+3. **Domains**: add the domain, service `frontend`, port `80`, HTTPS on (Let's Encrypt).
+4. Deploy. Enable auto-deploy to redeploy on every push.
