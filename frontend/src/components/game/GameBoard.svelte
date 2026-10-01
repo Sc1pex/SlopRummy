@@ -22,20 +22,23 @@
   const COLS = 16
   const SLOTS = COLS * RACK_ROWS
 
-  // ---- Layout: size the rack to fit the screen width and about 40% of its height ----
-  let innerWidth = $state(window.innerWidth)
-  let innerHeight = $state(window.innerHeight)
+  // ---- Layout ----
+  // Sizes come from the board's measured box, which CSS keeps within the visible area
+  // (100dvh). window.innerHeight can be larger than what is on screen, e.g. on Firefox for
+  // Android while its toolbars are showing, which would push the rack off the bottom.
+  let boardW = $state(window.innerWidth)
+  let boardH = $state(window.innerHeight)
+  // The rack takes the full width and at most ~40% of the height.
   const tileH = $derived(
-    Math.floor(
-      Math.min(
-        (innerWidth - 32 - 12 - (COLS - 1) * 3) / COLS / 0.72,
-        (innerHeight * 0.4 - 24) / (RACK_ROWS * 1.16),
-        92,
+    Math.max(
+      24,
+      Math.floor(
+        Math.min((boardW - 32 - 12 - (COLS - 1) * 3) / COLS / 0.72, (boardH * 0.4 - 24) / (RACK_ROWS * 1.16), 92),
       ),
     ),
   )
-  const meldTileH = $derived(Math.max(30, Math.min(64, Math.floor(innerHeight * 0.11))))
-  const pileTileH = $derived(Math.max(44, Math.min(96, Math.floor(innerHeight * 0.17))))
+  const meldTileH = $derived(Math.max(28, Math.min(64, Math.floor(boardH * 0.11))))
+  const pileTileH = $derived(Math.max(40, Math.min(96, Math.floor(boardH * 0.17))))
 
   // ---- Game state ----
   const game = $derived(table.game!)
@@ -165,9 +168,7 @@
   }
 </script>
 
-<svelte:window bind:innerWidth bind:innerHeight />
-
-<div class="board felt" style:--tile-h="{meldTileH}px">
+<div class="board felt" style:--tile-h="{meldTileH}px" bind:clientWidth={boardW} bind:clientHeight={boardH}>
   <!-- Opponents and table info -->
   <header class="top">
     <div class="opponents">
@@ -331,7 +332,11 @@
 <style>
   .board {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
     display: grid;
     grid-template-rows: auto 1fr auto;
     gap: 6px;
