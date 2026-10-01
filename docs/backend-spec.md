@@ -10,54 +10,44 @@ Online platform for playing **Remi etalat** (Romanian rummy with tiles on racks)
 
 ## 1. Game rules
 
-Rules are **per table**, built from a named **preset** with optional field overrides.
-The rules are snapshotted into every game so history always replays under the rules it was played with.
+### Table settings (`Remybun.Engine.Rules`, per table, from a preset + overrides)
 
-### `Remybun.Engine.Rules`
+| Field | `classic` | Meaning |
+|---|---|---|
+| `min_players` / `max_players` | 2 / 4 | Seats at the table |
+| `opening_min_points` | 45 | Minimum points of the opening |
+| `max_jokers_per_meld` | 1 | 1 or 2 |
+| `joker_swap` | true | Opened players may swap a joker out of a meld for the tile it stands for |
+| `match` | `{:rounds, 4}` | `{:rounds, n}`, `{:points_limit, n}` or `:single` |
+| `turn_timer_ms` | 60_000 | Per-turn limit; `nil` = off |
 
-| Field | Type | `:classic` preset | Meaning |
-|---|---|---|---|
-| `min_players` / `max_players` | int | 2 / 4 | Seats at the table |
-| `hand_size` | int | 14 | Cards dealt; the starting player gets `hand_size + 1` and starts by discarding |
-| `jokers` | int | 2 | Jokers added to the 104 numbered tiles |
-| `opening_min_points` | int | 45 | Minimum total value of the first lay-down |
-| `discard_pickup` | `:must_use \| :free` | `:must_use` | Top discard may only be taken if used in a meld that same turn |
-| `max_jokers_per_meld` | int | 1 | |
-| `joker_swap` | bool | true | After opening, a player may replace a joker in a meld with the real card it represents (and must use the joker that turn) |
-| `lay_off_before_opening` | bool | false | Whether adding to others' melds is allowed before opening |
-| `atu` | `:off` | `:off` | Reserved for future presets |
-| `joker_penalty` | int | 50 | Penalty value of a joker left in hand |
-| `not_opened_penalty` | int | 100 | Flat penalty for a player who never opened |
-| `joker_close_multiplier` | int | 2 | Score multiplier when going out by discarding a joker |
-| `stock_exhausted` | `:reshuffle \| :end_round` | `:reshuffle` | Reshuffle the discard pile (except the top card) into the stock |
-| `match` | `{:rounds, n} \| {:points_limit, n} \| :single` | `{:rounds, 4}` | Match format |
-| `turn_timer_ms` | int \| nil | 60_000 | Per-turn time limit; `nil` = off |
+Rules snapshots are stored with every game; keys that are no longer settings are ignored when loading.
 
-### Classic preset — the play
+### Fixed rules (implemented in `Remybun.Engine.Round`)
 
-- **Tiles:** numbers 1–13 in four colors (black, yellow, red, blue), two of each, + 2 jokers = 106 tiles.
-  (Internally a tile is `Card` with `rank` and `color`.)
-- **Turn:** draw (stock or top discard) → optionally lay down new melds / add to melds / swap jokers → discard one card.
-  A taken discard can be returned (`return_discard`) as long as nothing else was done that turn.
-  The starting player of a round skips the draw.
-- **Melds:**
-  - *Set*: 3–4 tiles of the same number, all different colors.
-  - *Run*: 3+ consecutive tiles of one color. A 1 goes before 2 (1-2-3) or after 13 (12-13-1); no wrap-around (13-1-2 is invalid).
-  - At most `max_jokers_per_meld` jokers per meld; a meld can't be all jokers.
-- **Opening value:** tiles count their number; a 1 counts 1 before a 2 and 25 after 13 or in a set of 1s.
-  A joker in a meld counts as the tile it stands for.
-- **Penalty for tiles left in hand:** 2–9 = 5, 10–13 = 10, 1 = 25, joker = `joker_penalty` (50).
-- **Opening:** the melds laid down in the turn a player first opens must total ≥ `opening_min_points`.
-- **After opening:** the player may add cards to any meld on the table and swap jokers.
-- **Going out:** a player goes out by discarding their last card (they must be able to discard — a player can never be left with 0 cards without discarding).
-- **Round scoring (penalty points, lower is better):**
-  - The player who went out scores 0.
-  - Others score the sum of their hand's values, or `not_opened_penalty` if they never opened.
-  - Going out by discarding a joker multiplies everyone else's penalty by `joker_close_multiplier`.
-- **Stock exhausted:** reshuffle the discard pile except its top card into a new stock (or end the round with no winner under `:end_round`).
-- **Match:** after `n` rounds, lowest cumulative penalty wins. The starting seat rotates each round.
-
----
+- **Tiles:** 1–13 in four colors (black, yellow, red, blue), two of each, + 2 jokers = 106.
+- **Deal:** starting seat 15 tiles, others 14. The next tile is the **atu**: set aside, shown, out of play.
+  A player dealt the atu's twin gets +50. An atu that is a 1 or a joker doubles every score of the round.
+- **Duplicate exchange** (before the first discard): duplicates are two identical tiles (jokers included),
+  in tiers small (2–9), big (10–13), nail (1), joker. A player offers one tile of a pair; others see only
+  the tier and may answer with one of their own duplicates; the offerer accepts one answer and the two
+  tiles swap. The UI warns when tiers differ. The phase ends when everyone is done or after 60s.
+  A player dealt 3+ duplicate pairs may refuse the deal: everything is reshuffled and redealt.
+- **Turn:** draw from the stock, or take from the discard pile → lay down / add / swap jokers → discard.
+- **Discard pile:** a row in discard order. The starting player's first discard can never be taken.
+  An unopened player may take only the last tile; an opened player may take any tile and gets all tiles
+  after it. The chosen tile must be used immediately: `take_discard` carries the melds/additions using it.
+- **First turn:** no melding of any kind on a player's first turn.
+- **Opening:** at least `opening_min_points` (jokers count as the tile they replace) with at least one run
+  and one set — or any opening containing a set of 1s. On the opening turn the player may not add to
+  melds already on the table.
+- **Melds:** sets of 3–4 equal numbers in different colors; runs of 3+ consecutive numbers of one color,
+  a 1 before 2 or after 13, no wrap-around. Meld points: tile numbers, a 1 after 13 or in a set is 25.
+- **Going out:** discarding the last tile.
+- **Scoring (higher is better):** per player, points of tiles they laid (a joker as the tile it replaces)
+  − tiles left in hand (2–9 = 5, 10–13 = 10, 1 = 25, joker = 50) + 50 for closing + 50 atu bonus.
+  Then closing with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
+  If the stock runs out, the round ends without a closing bonus.
 
 ## 2. Architecture
 
@@ -144,8 +134,14 @@ Client → server (reply `{:ok, ...}` or `{:error, %{reason}}`):
 | `update_rules` | `{preset, overrides}` (host, waiting room only) |
 | `start` | — (host) |
 | `draw_stock` | — |
-| `take_discard` | — |
-| `return_discard` | — |
+| `take_discard` | `{card, melds: [[card_id]], additions: [{meld_id, cards}]}` |
+| `offer_duplicate` | `{card}` (exchange phase) |
+| `withdraw_offer` | `{offer_id}` |
+| `respond_offer` | `{offer_id, card}` |
+| `withdraw_response` | `{offer_id}` |
+| `accept_response` | `{offer_id, seat}` |
+| `exchange_done` | — |
+| `refuse_deal` | — |
 | `lay_down` | `{melds: [[card_id, ...], ...]}` |
 | `add_to_meld` | `{meld_id, cards: [card_id, ...]}` |
 | `swap_joker` | `{meld_id, card: card_id}` |

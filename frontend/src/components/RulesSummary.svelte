@@ -19,8 +19,6 @@
   <dd>{rules.max_players}</dd>
   <dt>{t('rules.turn_timer')}</dt>
   <dd>{rules.turn_timer_ms ? t('rules.seconds', { n: rules.turn_timer_ms / 1000 }) : t('rules.off')}</dd>
-  <dt>{t('rules.discard_pickup')}</dt>
-  <dd>{rules.discard_pickup === 'must_use' ? t('rules.must_use') : t('rules.free')}</dd>
 </dl>
 
 <style>

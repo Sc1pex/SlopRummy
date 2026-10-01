@@ -12,7 +12,7 @@
         rounds: result.rounds.map((r) => r.scores[seat] ?? 0),
         total: result.totals[seat] ?? 0,
       }))
-      .sort((a, b) => a.total - b.total),
+      .sort((a, b) => b.total - a.total),
   )
   const winnerNames = $derived(result.winners.map((s) => result.players[s]?.username).join(', '))
 </script>

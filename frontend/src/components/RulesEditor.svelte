@@ -17,7 +17,6 @@
   let opening = $state(initial.opening_min_points)
   let maxPlayers = $state(initial.max_players)
   let timer = $state(initial.turn_timer_ms === null ? 0 : initial.turn_timer_ms / 1000)
-  let pickup = $state(initial.discard_pickup)
   let matchType = $state(initial.match.type)
   let matchN = $state('n' in initial.match ? initial.match.n : 4)
 
@@ -27,7 +26,6 @@
       opening_min_points: Number(opening),
       max_players: Number(maxPlayers),
       turn_timer_ms: Number(timer) === 0 ? null : Number(timer) * 1000,
-      discard_pickup: pickup,
       match: matchType === 'single' ? { type: 'single' } : { type: matchType, n: Number(matchN) },
     })
   }
@@ -62,13 +60,6 @@
     <select class="input" bind:value={timer}>
       <option value={0}>{t('rules.off')}</option>
       {#each [30, 60, 90, 120] as s (s)}<option value={s}>{t('rules.seconds', { n: s })}</option>{/each}
-    </select>
-  </label>
-  <label>
-    <span>{t('rules.discard_pickup')}</span>
-    <select class="input" bind:value={pickup}>
-      <option value="must_use">{t('rules.must_use')}</option>
-      <option value="free">{t('rules.free')}</option>
     </select>
   </label>
   <div class="buttons">

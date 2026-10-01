@@ -36,25 +36,62 @@ export interface Meld {
   points: number
 }
 
+export interface ScoreBreakdown {
+  laid: number
+  hand: number
+  closing: number
+  atu: number
+  multiplier: number
+  total: number
+}
+
 export interface RoundResult {
   winner: number | null
   joker_close: boolean
+  atu_multiplier: number
   scores: Record<string, number>
+  breakdown: Record<string, ScoreBreakdown>
   hands: Record<string, Tile[]>
 }
 
+export type Tier = 'small' | 'big' | 'nail' | 'joker'
+
+export interface ExchangeOffer {
+  id: number
+  seat: number
+  tier: Tier
+  /** Only on the viewer's own offers. */
+  tile: Tile | null
+  /** The offerer sees every answer; others only their own (with `tile`). */
+  responses: { seat: number; tier: Tier; tile: Tile | null }[]
+  response_count: number
+}
+
+export interface ExchangeView {
+  offers: ExchangeOffer[]
+  done: number[]
+  can_refuse: boolean
+}
+
 export interface RoundView {
-  phase: 'awaiting_draw' | 'awaiting_discard' | 'finished'
+  phase: 'exchange' | 'awaiting_draw' | 'awaiting_discard' | 'finished' | 'refused'
   current: number
   starting_seat: number
   stock_count: number
-  discard_top: Tile | null
-  discard_count: number
+  /** Oldest first; the last tile is the top. */
+  discard: Tile[]
+  blocked_discard: number | null
+  atu: Tile
+  atu_multiplier: number
+  atu_holders: number[]
   melds: Meld[]
   opened: Record<string, boolean>
+  first_turn: Record<string, boolean>
   hand_counts: Record<string, number>
   hand: Tile[] | null
-  must_use: { taken_discard: number | null; pending_joker: number | null } | null
+  /** Only on the viewer's own turn. */
+  turn: { pending_joker: number | null; opened_now: boolean } | null
+  exchange: ExchangeView | null
   result: RoundResult | null
 }
 
@@ -85,18 +122,9 @@ export type MatchFormat = { type: 'rounds' | 'points_limit'; n: number } | { typ
 export interface Rules {
   min_players: number
   max_players: number
-  hand_size: number
-  jokers: number
   opening_min_points: number
-  discard_pickup: 'must_use' | 'free'
   max_jokers_per_meld: number
   joker_swap: boolean
-  lay_off_before_opening: boolean
-  atu: 'off'
-  joker_penalty: number
-  not_opened_penalty: number
-  joker_close_multiplier: number
-  stock_exhausted: 'reshuffle' | 'end_round'
   match: MatchFormat
   turn_timer_ms: number | null
 }

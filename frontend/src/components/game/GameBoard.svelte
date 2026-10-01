@@ -12,6 +12,7 @@
   import { receive, send } from '../../lib/transitions'
   import ChatPanel from '../ChatPanel.svelte'
   import Tile from '../Tile.svelte'
+  import Exchange from './Exchange.svelte'
   import MeldView from './MeldView.svelte'
   import Rack from './Rack.svelte'
   import RoundResult from './RoundResult.svelte'
@@ -46,16 +47,16 @@
   const rules = $derived(table.rules)
   const mySeat = $derived(table.my_seat)
   const spectator = $derived(mySeat === null)
-  const myTurn = $derived(!!round && round.phase !== 'finished' && round.current === mySeat)
+  const exchanging = $derived(round?.phase === 'exchange')
+  const playing = $derived(round?.phase === 'awaiting_draw' || round?.phase === 'awaiting_discard')
+  const myTurn = $derived(!!round && playing && round.current === mySeat)
   const drawPhase = $derived(myTurn && round?.phase === 'awaiting_draw')
   const playPhase = $derived(myTurn && round?.phase === 'awaiting_discard')
   const opened = $derived(mySeat !== null && !!round?.opened[mySeat])
+  const firstTurn = $derived(mySeat !== null && !!round?.first_turn[mySeat])
+  const openedNow = $derived(!!round?.turn?.opened_now)
   const hand = $derived<TileT[]>(round?.hand ?? [])
-  const handIds = $derived(hand.map((t) => t.id))
-  const byId = $derived(new Map(hand.map((t) => [t.id, t])))
-  const mustUse = $derived(round?.must_use ?? null)
-  const pendingDiscard = $derived(mustUse?.taken_discard != null && byId.has(mustUse.taken_discard))
-  const pendingJoker = $derived(mustUse?.pending_joker != null && byId.has(mustUse.pending_joker))
+  const discard = $derived<TileT[]>(round?.discard ?? [])
 
   const opponents = $derived.by(() => {
     const n = table.players.length
@@ -65,17 +66,54 @@
   const currentPlayer = $derived(round ? table.players[round.current] : null)
   const timerTotal = $derived(rules.turn_timer_ms ?? 60_000)
 
+  // ---- Taking from the discard pile ----
+  // Tapping a takeable tile puts it (and, for opened players, every tile after it) on the
+  // rack provisionally. The take is only sent together with the melds that use the tile.
+  let taking = $state<{ tile: number; ids: number[] } | null>(null)
+
+  function takeable(index: number): boolean {
+    if (!drawPhase || firstTurn || !round) return false
+    if (discard[index].id === round.blocked_discard) return false
+    return opened || index === discard.length - 1
+  }
+
+  function startTake(index: number) {
+    if (!takeable(index)) return
+    const ids = discard.slice(index).map((t) => t.id)
+    taking = { tile: ids[0], ids }
+    selected = [ids[0]]
+  }
+
+  function cancelTake() {
+    taking = null
+    selected = []
+  }
+
+  $effect(() => {
+    if (!drawPhase && taking) taking = null
+  })
+
+  const takenTiles = $derived(taking ? discard.filter((t) => taking!.ids.includes(t.id)) : [])
+  const rackTiles = $derived([...hand, ...takenTiles])
+  const rackIds = $derived(rackTiles.map((t) => t.id))
+  const byId = $derived(new Map(rackTiles.map((t) => [t.id, t])))
+  const pendingJoker = $derived(round?.turn?.pending_joker != null && hand.some((t) => t.id === round!.turn!.pending_joker))
+
   // ---- Rack layout (saved on this device per table) ----
   const rackKey = `remybun.rack.${untrack(() => table.code)}`
   let saved = $state<Layout>(load<Layout>(rackKey, {}))
 
   // A saved layout that knows less than half the current tiles belongs to an earlier deal.
   const layout = $derived.by(() => {
-    const known = handIds.filter((id) => saved[id] !== undefined).length
-    return placeTiles(handIds, known * 2 >= handIds.length ? saved : {}, SLOTS)
+    const known = rackIds.filter((id) => saved[id] !== undefined).length
+    return placeTiles(rackIds, known * 2 >= rackIds.length ? saved : {}, SLOTS)
   })
 
-  $effect(() => save(rackKey, layout))
+  // Keep the saved layout in step with tiles placed automatically (deal, draws, takes).
+  $effect(() => {
+    save(rackKey, layout)
+    if (rackIds.some((id) => untrack(() => saved[id]) === undefined)) saved = layout
+  })
 
   function moveOnRack(id: number, slot: number) {
     saved = moveTile(layout, id, slot)
@@ -85,7 +123,7 @@
   let selected = $state<number[]>([])
 
   $effect(() => {
-    const ids = new Set(handIds)
+    const ids = new Set(rackIds)
     if (selected.some((id) => !ids.has(id))) selected = selected.filter((id) => ids.has(id))
   })
 
@@ -100,7 +138,9 @@
   )
   const groupsValid = $derived(groups.length > 0 && groups.every((g, i) => g.length >= 3 && groupPoints[i] !== null))
   const layDownPoints = $derived(groupPoints.reduce<number>((sum, p) => sum + (p ?? 0), 0))
-  const canTargetMelds = $derived(playPhase && selected.length > 0 && (opened || rules.lay_off_before_opening))
+  const canMeld = $derived(!firstTurn && (playPhase || !!taking))
+  const canLayDown = $derived(canMeld && groupsValid && (!taking || selected.includes(taking.tile)))
+  const canTargetMelds = $derived(canMeld && selected.length > 0 && opened && !openedNow)
 
   // ---- Actions ----
   async function act(event: string, payload: Record<string, unknown> = {}): Promise<boolean> {
@@ -115,21 +155,34 @@
 
   async function layDown() {
     if (!groupsValid) return toast(errorText('invalid_meld'), 'error')
-    if (await act('lay_down', { melds: groups })) selected = []
+    const ok = taking
+      ? await act('take_discard', { card: taking.tile, melds: groups })
+      : await act('lay_down', { melds: groups })
+    if (ok) {
+      taking = null
+      selected = []
+    }
   }
 
-  async function discard() {
+  async function discardTile() {
     const [card] = selected
     if (await act('discard', { card })) selected = []
   }
 
-  function tapMeld(meld: Meld) {
+  async function tapMeld(meld: Meld) {
     if (!canTargetMelds) return
-    const swap = selected.length === 1 && opened && rules.joker_swap && jokerMatch(meld, byId.get(selected[0])!)
-    const request = swap
-      ? act('swap_joker', { meld_id: meld.id, card: selected[0] })
-      : act('add_to_meld', { meld_id: meld.id, cards: selected })
-    request.then((ok) => ok && (selected = []))
+    let ok: boolean
+    if (taking) {
+      ok = await act('take_discard', { card: taking.tile, additions: [{ meld_id: meld.id, cards: selected }] })
+    } else if (selected.length === 1 && rules.joker_swap && jokerMatch(meld, byId.get(selected[0])!)) {
+      ok = await act('swap_joker', { meld_id: meld.id, card: selected[0] })
+    } else {
+      ok = await act('add_to_meld', { meld_id: meld.id, cards: selected })
+    }
+    if (ok) {
+      taking = null
+      selected = []
+    }
   }
 
   /** Whether `tile` is the real tile a joker in `meld` stands for. */
@@ -151,12 +204,22 @@
 
   const hint = $derived.by(() => {
     if (spectator) return t('game.spectating')
+    if (exchanging) return t('exchange.title')
     if (!myTurn) return currentPlayer ? t('game.turn_of', { name: currentPlayer.username }) : ''
+    if (firstTurn) return t('game.first_turn')
     if (pendingJoker) return t('game.must_use_joker')
-    if (pendingDiscard) return t('game.must_use_discard')
+    if (taking) return t('game.take_hint')
     if (drawPhase) return t('game.draw_hint')
+    if (openedNow) return t('game.opening_turn')
+    if (!opened) return t('game.opening_rule', { n: rules.opening_min_points })
     if (canTargetMelds) return t('game.select_meld_hint')
     return t('game.discard_hint')
+  })
+
+  // The round result is shown after the round is gone; remember its atu.
+  let lastAtu = $state<TileT | null>(null)
+  $effect(() => {
+    if (round?.atu) lastAtu = round.atu
   })
 
   // ---- Menu / chat ----
@@ -211,43 +274,58 @@
     </div>
   </header>
 
-  <!-- Stock, discard and melds on the table -->
+  <!-- Stock and atu, the discard row, and melds on the table (or the duplicate exchange) -->
   <section class="middle">
     <div class="piles" style:--tile-h="{pileTileH}px">
-      <button class="pile" class:active={drawPhase} disabled={!drawPhase} onclick={() => act('draw_stock')}>
+      <button class="pile" class:active={drawPhase && !taking} disabled={!drawPhase || !!taking} onclick={() => act('draw_stock')}>
         <div class="stack"><Tile faceDown /></div>
         <span class="count tabular">{round?.stock_count ?? 0}</span>
       </button>
-      <button
-        class="pile"
-        class:active={drawPhase && !!round?.discard_top}
-        disabled={!drawPhase || !round?.discard_top}
-        onclick={() => act('take_discard')}
-      >
-        {#if round?.discard_top}
-          {#key round.discard_top.id}
-            <div in:receive={{ key: round.discard_top.id }} out:send={{ key: round.discard_top.id }}>
-              <Tile tile={round.discard_top} />
-            </div>
-          {/key}
-        {:else}
-          <div class="empty-pile"></div>
-        {/if}
-        <span class="count tabular">{round?.discard_count ?? 0}</span>
-      </button>
+      {#if round?.atu}
+        <div class="atu" style:--tile-h="{Math.round(pileTileH * 0.7)}px" title={t('game.atu')}>
+          <Tile tile={round.atu} />
+          <span class="atu-label">{t('game.atu')}{round.atu_multiplier > 1 ? ' ×2' : ''}</span>
+        </div>
+      {/if}
     </div>
 
-    <div class="melds">
-      {#each meldGroups as g (g.player.seat)}
-        <div class="meld-group">
-          <div class="owner">{g.player.seat === mySeat ? t('game.your_melds') : g.player.username}</div>
-          <div class="meld-row">
-            {#each g.melds as meld (meld.id)}
-              <MeldView {meld} targetable={canTargetMelds} ontap={tapMeld} />
-            {/each}
-          </div>
+    <div class="table-area">
+      {#if discard.length > 0}
+        <div class="discards" aria-label={t('game.discards')}>
+          {#each discard as tile, i (tile.id)}
+            {@const blocked = tile.id === round?.blocked_discard}
+            {@const inTake = taking?.ids.includes(tile.id)}
+            <button
+              class="discard"
+              class:blocked
+              class:takeable={!taking && takeable(i)}
+              class:in-take={inTake}
+              disabled={!!taking || !takeable(i)}
+              onclick={() => startTake(i)}
+            >
+              <div in:receive={{ key: tile.id }} out:send={{ key: tile.id }}><Tile {tile} /></div>
+              {#if blocked}<span class="lock">🔒</span>{/if}
+            </button>
+          {/each}
         </div>
-      {/each}
+      {/if}
+
+      {#if exchanging && round}
+        <Exchange {round} players={table.players} {mySeat} {act} />
+      {:else}
+        <div class="melds">
+          {#each meldGroups as g (g.player.seat)}
+            <div class="meld-group">
+              <div class="owner">{g.player.seat === mySeat ? t('game.your_melds') : g.player.username}</div>
+              <div class="meld-row">
+                {#each g.melds as meld (meld.id)}
+                  <MeldView {meld} targetable={canTargetMelds} ontap={tapMeld} />
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </section>
 
@@ -275,18 +353,18 @@
         </div>
 
         <div class="buttons">
-          {#if pendingDiscard && playPhase}
-            <button class="btn btn-sm" onclick={() => act('return_discard')}>↩ {t('game.return_discard')}</button>
+          {#if taking}
+            <button class="btn btn-ghost btn-sm" onclick={cancelTake}>{t('game.cancel_take')}</button>
           {/if}
-          {#if playPhase && selected.length >= 3}
-            <button class="btn btn-primary btn-sm" disabled={!groupsValid} onclick={layDown}>
-              {t('game.lay_down')}{groupsValid ? ` · ${layDownPoints}` : ''}
+          {#if canMeld && selected.length >= 3}
+            <button class="btn btn-primary btn-sm" disabled={!canLayDown} onclick={layDown}>
+              {taking ? t('game.take_lay_down') : t('game.lay_down')}{groupsValid ? ` · ${layDownPoints}` : ''}
             </button>
           {/if}
           {#if playPhase && selected.length === 1}
-            <button class="btn btn-primary btn-sm" onclick={discard}>{t('game.discard')}</button>
+            <button class="btn btn-primary btn-sm" onclick={discardTile}>{t('game.discard')}</button>
           {/if}
-          {#if selected.length > 0}
+          {#if selected.length > 0 && !taking}
             <button class="btn btn-ghost btn-sm" onclick={() => (selected = [])} aria-label={t('game.clear')}>✕</button>
           {/if}
           <div class="sort">
@@ -301,12 +379,12 @@
       </div>
 
       <Rack
-        tiles={hand}
+        tiles={rackTiles}
         {layout}
         cols={COLS}
         tileHeight={tileH}
         {selected}
-        highlighted={[pendingDiscard ? mustUse!.taken_discard : null, pendingJoker ? mustUse!.pending_joker : null]}
+        highlighted={[...(taking?.ids ?? []), pendingJoker ? round!.turn!.pending_joker : null]}
         ontoggle={toggle}
         onmove={moveOnRack}
       />
@@ -314,7 +392,7 @@
   {/if}
 
   {#if game.phase === 'between_rounds' && game.last_result}
-    <RoundResult result={game.last_result} players={table.players} totals={game.totals} />
+    <RoundResult result={game.last_result} players={table.players} totals={game.totals} atu={lastAtu} />
   {/if}
 
   {#if chatOpen}
@@ -339,6 +417,7 @@
     height: 100dvh;
     display: grid;
     grid-template-rows: auto 1fr auto;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
     padding: calc(6px + var(--safe-top)) calc(8px + var(--safe-right)) calc(6px + var(--safe-bottom))
       calc(8px + var(--safe-left));
@@ -477,7 +556,8 @@
 
   .piles {
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 8px;
     align-items: center;
   }
 
@@ -517,11 +597,70 @@
     font-weight: 700;
   }
 
-  .empty-pile {
-    width: calc(var(--tile-h) * 0.72);
-    height: var(--tile-h);
-    border-radius: 8px;
-    border: 2px dashed rgb(255 255 255 / 0.2);
+
+  .table-area {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .discards {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 4px 2px 6px;
+    flex: none;
+    scrollbar-width: thin;
+  }
+
+  .discard {
+    position: relative;
+    padding: 0;
+    border: 0;
+    background: none;
+    border-radius: 6px;
+    flex: none;
+  }
+
+  .discard:disabled {
+    cursor: default;
+  }
+
+  .discard.blocked {
+    opacity: 0.45;
+    filter: grayscale(0.6);
+  }
+
+  .discard.takeable :global(.tile) {
+    box-shadow:
+      inset 0 -3px 0 #d8ccb2,
+      0 0 0 2px var(--accent);
+  }
+
+  .discard.in-take {
+    opacity: 0.25;
+  }
+
+  .lock {
+    position: absolute;
+    top: -6px;
+    right: -4px;
+    font-size: 0.7rem;
+  }
+
+  .atu {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .atu-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent);
   }
 
   .melds {
@@ -571,7 +710,7 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-    flex: 1 1 auto;
+    flex: 1 1 0;
   }
 
   .status {

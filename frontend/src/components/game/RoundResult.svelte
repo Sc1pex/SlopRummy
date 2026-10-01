@@ -1,42 +1,61 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition'
   import { t } from '../../lib/i18n.svelte'
-  import type { Player, RoundResult } from '../../lib/types'
+  import { tileLabel } from '../../lib/tiles'
+  import type { Player, RoundResult, Tile } from '../../lib/types'
 
-  let { result, players, totals }: { result: RoundResult; players: Player[]; totals: Record<string, number> } =
-    $props()
+  interface Props {
+    result: RoundResult
+    players: Player[]
+    totals: Record<string, number>
+    atu: Tile | null
+  }
+
+  let { result, players, totals, atu }: Props = $props()
 
   const winner = $derived(result.winner === null ? null : players[result.winner])
   const rows = $derived(
     players
-      .map((p) => ({ ...p, round: result.scores[p.seat] ?? 0, total: totals[p.seat] ?? 0 }))
-      .sort((a, b) => a.total - b.total),
+      .map((p) => ({ ...p, b: result.breakdown[p.seat], total: totals[p.seat] ?? 0 }))
+      .sort((a, b) => b.total - a.total),
   )
+  const signed = (n: number) => (n > 0 ? `+${n}` : String(n))
 </script>
 
 <div class="backdrop" transition:fade={{ duration: 150 }}>
   <div class="panel card" transition:scale={{ start: 0.92, duration: 180 }}>
     <h2>{t('game.round_over')}</h2>
     <p class="winner">{winner ? `🎉 ${t('game.winner', { name: winner.username })}` : t('game.no_winner')}</p>
-    {#if result.joker_close}<p class="joker">★ {t('game.joker_close')}</p>{/if}
-    <table>
-      <thead>
-        <tr>
-          <th></th>
-          <th>{t('game.round_points')}</th>
-          <th>{t('game.total')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each rows as row (row.seat)}
-          <tr class:won={row.seat === result.winner}>
-            <td class="name">{row.username}</td>
-            <td class="tabular">{row.round === 0 ? '0' : `+${row.round}`}</td>
-            <td class="tabular total">{row.total}</td>
+    {#if result.joker_close}<p class="note">☺ {t('game.joker_close')}</p>{/if}
+    {#if result.atu_multiplier > 1 && atu}<p class="note">{t('game.round_double', { tile: tileLabel(atu) })}</p>{/if}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>{t('game.laid')}</th>
+            <th>{t('game.hand')}</th>
+            <th>{t('game.bonus')}</th>
+            <th>{t('game.round_points')}</th>
+            <th>{t('game.total')}</th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each rows as row (row.seat)}
+            <tr class:won={row.seat === result.winner}>
+              <td class="name">{row.username}</td>
+              <td class="tabular">{row.b?.laid ?? 0}</td>
+              <td class="tabular">{row.b ? -row.b.hand : 0}</td>
+              <td class="tabular">
+                {row.b ? signed(row.b.closing + row.b.atu) : 0}{#if row.b && row.b.multiplier > 1}<span class="mult"> ×{row.b.multiplier}</span>{/if}
+              </td>
+              <td class="tabular strong">{signed(result.scores[row.seat] ?? 0)}</td>
+              <td class="tabular strong">{row.total}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
     <p class="muted next">{t('game.next_round')}</p>
   </div>
 </div>
@@ -49,57 +68,71 @@
     display: grid;
     place-items: center;
     background: rgb(0 0 0 / 0.5);
-    padding: 16px;
+    padding: 12px;
   }
 
   .card {
-    width: min(420px, 100%);
+    width: min(560px, 100%);
     max-height: 100%;
     overflow: auto;
+    padding: 12px 14px;
   }
 
   h2 {
-    font-size: 1.15rem;
+    font-size: 1.1rem;
   }
 
   .winner {
-    margin: 6px 0;
+    margin: 4px 0;
     font-weight: 700;
     color: var(--accent);
   }
 
-  .joker {
-    margin: 0 0 6px;
+  .note {
+    margin: 0 0 4px;
     color: #c9a0ff;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  .scroll {
+    overflow-x: auto;
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
+    font-size: 0.88rem;
   }
 
   th {
     text-align: right;
     color: var(--muted);
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
+    padding: 0 0 0 10px;
   }
 
   td {
     text-align: right;
-    padding: 5px 0;
+    padding: 4px 0 4px 10px;
     border-top: 1px solid var(--border);
+    white-space: nowrap;
   }
 
   .name {
     text-align: left;
     font-weight: 600;
+    padding-left: 0;
   }
 
-  .total {
+  .strong {
     font-weight: 800;
+  }
+
+  .mult {
+    color: #c9a0ff;
+    font-weight: 700;
   }
 
   .won td {
@@ -107,8 +140,8 @@
   }
 
   .next {
-    margin: 10px 0 0;
-    font-size: 0.85rem;
+    margin: 8px 0 0;
+    font-size: 0.82rem;
     text-align: center;
   }
 </style>
