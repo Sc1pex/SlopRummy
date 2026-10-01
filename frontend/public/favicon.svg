@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f3d2e"/>
+  <g transform="translate(256 270)">
+    <g transform="rotate(-14)">
+      <rect x="-118" y="-160" width="200" height="280" rx="24" fill="#f4efe4" stroke="#0b1512" stroke-width="8"/>
+      <text x="-96" y="-104" font-family="Georgia, serif" font-size="64" font-weight="700" fill="#1d2a26">A</text>
+    </g>
+    <g transform="rotate(10)">
+      <rect x="-60" y="-150" width="200" height="280" rx="24" fill="#fbf8f1" stroke="#0b1512" stroke-width="8"/>
+      <text x="-38" y="-94" font-family="Georgia, serif" font-size="64" font-weight="700" fill="#c8322f">R</text>
+      <path d="M40 40 C 40 0, 100 0, 100 40 C 100 0, 160 0, 160 40 C 160 80, 100 110, 100 130 C 100 110, 40 80, 40 40 Z" transform="translate(-60 -40) scale(0.9)" fill="#c8322f"/>
+    </g>
+  </g>
+</svg>
