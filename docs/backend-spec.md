@@ -47,7 +47,8 @@ Rules snapshots are stored with every game; keys that are no longer settings are
   A joker counts as the tile it replaces.
 - **Going out:** discarding the last tile.
 - **Scoring (higher is better):** tile values are 2–9 = 5, 10–13 = 10, 1 = 25. Per player: value of the
-  tiles they laid (a joker as the tile it replaces) − value of tiles left in hand (joker = 50)
+  tiles they laid − value of tiles left in hand; a joker is 50 either way (it counts as the tile it
+  replaces only for the opening check)
   + 50 for closing + 50 atu bonus.
   Then closing with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out, the round ends without a closing bonus.

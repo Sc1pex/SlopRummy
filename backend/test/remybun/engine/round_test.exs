@@ -280,7 +280,7 @@ defmodule Remybun.Engine.RoundTest do
   end
 
   describe "scoring" do
-    test "laid 1s are worth 25 at the end even in a run, and a joker counts as its tile" do
+    test "at the end a laid 1 is worth 25 even in a run, and a laid joker 50" do
       meld = %Meld{
         id: 1,
         owner: 0,
@@ -297,9 +297,9 @@ defmodule Remybun.Engine.RoundTest do
       }
 
       {:ok, r, _} = Round.play(r, 0, {:discard, 9})
-      # 1 (25) + joker as 2 (5) + 3 (5), plus 50 for closing
-      assert r.result.breakdown[0].laid == 35
-      assert r.result.scores[0] == 85
+      # 1 (25) + joker (50) + 3 (5), plus 50 for closing
+      assert r.result.breakdown[0].laid == 80
+      assert r.result.scores[0] == 130
     end
 
     test "laid tiles minus hand, closing and atu bonuses" do
@@ -324,7 +324,7 @@ defmodule Remybun.Engine.RoundTest do
                %{laid: 15, hand: 75, closing: 0, atu: 50, multiplier: 1, total: -10}
     end
 
-    test "a joker scores as the tile it replaces; tiles added to others' melds count for the adder" do
+    test "a laid joker scores 50; tiles added to others' melds count for the adder" do
       meld = %Meld{
         id: 1,
         owner: 1,
@@ -344,7 +344,7 @@ defmodule Remybun.Engine.RoundTest do
 
       {:ok, r, _} = Round.play(r, 0, {:add_to_meld, 1, [9]})
       {:ok, r, _} = Round.play(r, 0, {:discard, 10})
-      assert r.result.breakdown[1].laid == 5 + 5 + 5
+      assert r.result.breakdown[1].laid == 5 + 50 + 5
       assert r.result.breakdown[0].laid == 5
     end
 

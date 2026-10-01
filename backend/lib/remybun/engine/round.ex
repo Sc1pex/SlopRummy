@@ -35,8 +35,8 @@ defmodule Remybun.Engine.Round do
   includes a set of 1s.
 
   ## Scoring
-  Per player: points of the tiles they laid (jokers as the tile they stand for) minus the
-  tiles left in hand (jokers 50), plus the closing bonus and the atu bonus. Then closing
+  Per player: value of the tiles they laid minus the tiles left in hand (2–9 = 5,
+  10–13 = 10, 1 = 25, joker = 50 either way), plus the closing bonus and the atu bonus. Then closing
   with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out the round ends and nobody gets the closing bonus.
 
@@ -519,7 +519,9 @@ defmodule Remybun.Engine.Round do
 
   defp finish(r, closer, joker_close) do
     laid =
-      for meld <- r.melds, {card, value} <- Meld.tile_values(meld), reduce: %{} do
+      for meld <- r.melds,
+          {card, value} <- Meld.tile_values(meld, Rules.joker_penalty()),
+          reduce: %{} do
         acc -> Map.update(acc, r.laid_by[card.id], value, &(&1 + value))
       end
 

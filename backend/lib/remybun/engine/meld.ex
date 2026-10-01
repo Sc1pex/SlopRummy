@@ -105,17 +105,11 @@ defmodule Remybun.Engine.Meld do
     do: Card.rank_value(rank) * length(cards)
 
   @doc """
-  End-of-round value of each tile in the meld (`Card.rank_value/1` of the number it shows
-  or, for a joker, the number it stands for).
+  End-of-round value of each tile in the meld: `Card.rank_value/1` of its number, and
+  `joker_value` for a joker (unlike the opening total, where a joker counts as its tile).
   """
-  def tile_values(%__MODULE__{type: :run, start: start, cards: cards}) do
-    cards
-    |> Enum.with_index(start)
-    |> Enum.map(fn {card, pos} -> {card, Card.rank_value(rank_at(pos))} end)
-  end
-
-  def tile_values(%__MODULE__{type: :set, rank: rank, cards: cards}) do
-    Enum.map(cards, &{&1, Card.rank_value(rank)})
+  def tile_values(%__MODULE__{cards: cards}, joker_value) do
+    Enum.map(cards, fn card -> {card, Card.hand_value(card, joker_value)} end)
   end
 
   @doc "JSON-friendly map. Jokers include an `as` key describing what they stand for."
