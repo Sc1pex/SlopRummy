@@ -8,10 +8,10 @@ const n = (rank: number, color: TileColor): Tile => ({ id: nextId++, rank, color
 const j = (): Tile => ({ id: nextId++, joker: true })
 
 describe('meldPoints (mirrors the server)', () => {
-  it('scores sets by number; 1s are worth 25', () => {
-    expect(meldPoints([n(7, 'red'), n(7, 'blue'), n(7, 'black')], 1)).toBe(21)
+  it('scores sets: 2–9 are 5, 10–13 are 10, 1s are 25', () => {
+    expect(meldPoints([n(7, 'red'), n(7, 'blue'), n(7, 'black')], 1)).toBe(15)
     expect(meldPoints([n(1, 'red'), n(1, 'blue'), n(1, 'black')], 1)).toBe(75)
-    expect(meldPoints([n(9, 'red'), j(), n(9, 'black')], 1)).toBe(27)
+    expect(meldPoints([n(12, 'red'), j(), n(12, 'black')], 1)).toBe(30)
   })
 
   it('rejects invalid sets', () => {
@@ -19,17 +19,18 @@ describe('meldPoints (mirrors the server)', () => {
     expect(meldPoints([n(7, 'red'), n(7, 'blue')], 1)).toBeNull()
   })
 
-  it('scores runs; a 1 goes before 2 or after 13, no wrap-around', () => {
+  it('scores runs; a 1 is 5 before 2 and 10 after 13, no wrap-around', () => {
     expect(meldPoints([n(6, 'red'), n(4, 'red'), n(5, 'red')], 1)).toBe(15)
-    expect(meldPoints([n(1, 'black'), n(2, 'black'), n(3, 'black')], 1)).toBe(6)
-    expect(meldPoints([n(12, 'black'), n(13, 'black'), n(1, 'black')], 1)).toBe(50)
+    expect(meldPoints([n(9, 'red'), n(10, 'red'), n(11, 'red')], 1)).toBe(25)
+    expect(meldPoints([n(1, 'black'), n(2, 'black'), n(3, 'black')], 1)).toBe(15)
+    expect(meldPoints([n(12, 'black'), n(13, 'black'), n(1, 'black')], 1)).toBe(30)
     expect(meldPoints([n(13, 'black'), n(1, 'black'), n(2, 'black')], 1)).toBeNull()
   })
 
   it('places jokers in gaps, then high, then low', () => {
     expect(meldPoints([n(4, 'red'), j(), n(6, 'red')], 1)).toBe(15)
-    expect(meldPoints([n(5, 'red'), n(6, 'red'), j()], 1)).toBe(18)
-    expect(meldPoints([n(13, 'red'), n(1, 'red'), j()], 1)).toBe(50)
+    expect(meldPoints([n(8, 'red'), n(9, 'red'), j()], 1)).toBe(20)
+    expect(meldPoints([n(13, 'red'), n(1, 'red'), j()], 1)).toBe(30)
   })
 
   it('respects the joker limit and needs a real tile', () => {

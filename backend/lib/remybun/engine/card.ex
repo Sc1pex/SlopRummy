@@ -24,22 +24,26 @@ defmodule Remybun.Engine.Card do
   def joker?(%__MODULE__{}), do: false
 
   @doc """
-  Penalty value of a tile left in hand: 2–9 are 5, 10–13 are 10, a 1 is 25,
-  a joker is `joker_value`.
+  Scoring value of a number: 2–9 are 5, 10–13 are 10, a 1 is 25. Used at the end of the
+  round for tiles laid and tiles left in hand.
   """
+  def rank_value(1), do: 25
+  def rank_value(rank) when rank >= 10, do: 10
+  def rank_value(_rank), do: 5
+
+  @doc "End-of-round value of a tile left in hand; a joker is `joker_value`."
   def hand_value(tile, joker_value)
   def hand_value(%__MODULE__{rank: nil}, joker_value), do: joker_value
-  def hand_value(%__MODULE__{rank: 1}, _), do: 25
-  def hand_value(%__MODULE__{rank: rank}, _) when rank >= 10, do: 10
-  def hand_value(%__MODULE__{}, _), do: 5
+  def hand_value(%__MODULE__{rank: rank}, _), do: rank_value(rank)
 
   @doc """
-  Value of a meld position, used for the opening total. Positions go 1..14:
-  1 is a 1 before 2, 14 is a 1 after 13 (worth 25, like a 1 in a set).
-  Other tiles are worth their number.
+  Value of a run position for the opening total. Positions go 1..14: 1 is a 1 before 2
+  (worth 5), 14 is a 1 after 13 (worth 10). Other positions: 2–9 are 5, 10–13 are 10.
+  A 1 in a set is worth 25 (see `Meld.points/1`).
   """
-  def position_value(14), do: 25
-  def position_value(rank), do: rank
+  def position_value(1), do: 5
+  def position_value(14), do: 10
+  def position_value(pos), do: rank_value(pos)
 
   @doc "Duplicate tier, used when swapping duplicates: small (2-9), big (10-13), nail (1), joker."
   def tier(%__MODULE__{rank: nil}), do: :joker

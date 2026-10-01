@@ -38,14 +38,17 @@ Rules snapshots are stored with every game; keys that are no longer settings are
   An unopened player may take only the last tile; an opened player may take any tile and gets all tiles
   after it. The chosen tile must be used immediately: `take_discard` carries the melds/additions using it.
 - **First turn:** no melding of any kind on a player's first turn.
-- **Opening:** at least `opening_min_points` (jokers count as the tile they replace) with at least one run
+- **Opening:** at least `opening_min_points` (opening value, below) with at least one run
   and one set — or any opening containing a set of 1s. On the opening turn the player may not add to
   melds already on the table.
 - **Melds:** sets of 3–4 equal numbers in different colors; runs of 3+ consecutive numbers of one color,
-  a 1 before 2 or after 13, no wrap-around. Meld points: tile numbers, a 1 after 13 or in a set is 25.
+  a 1 before 2 or after 13, no wrap-around.
+- **Opening value:** 2–9 = 5, 10–13 = 10; a 1 is 5 before a 2, 10 after 13, 25 in a set of 1s.
+  A joker counts as the tile it replaces.
 - **Going out:** discarding the last tile.
-- **Scoring (higher is better):** per player, points of tiles they laid (a joker as the tile it replaces)
-  − tiles left in hand (2–9 = 5, 10–13 = 10, 1 = 25, joker = 50) + 50 for closing + 50 atu bonus.
+- **Scoring (higher is better):** tile values are 2–9 = 5, 10–13 = 10, 1 = 25. Per player: value of the
+  tiles they laid (a joker as the tile it replaces) − value of tiles left in hand (joker = 50)
+  + 50 for closing + 50 atu bonus.
   Then closing with a joker doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out, the round ends without a closing bonus.
 

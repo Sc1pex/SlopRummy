@@ -31,7 +31,7 @@ defmodule Remybun.Engine.RoundTest do
     }
   end
 
-  # 10-11-12 red (33) + three 5s (15) = 48: a valid opening with a run and a set.
+  # 10-11-12 red (30) + three 5s (15) = 45: a valid opening with a run and a set.
   defp opening_tiles do
     run = [c(1, 10, :red), c(2, 11, :red), c(3, 12, :red)]
     set = [c(4, 5, :black), c(5, 5, :blue), c(6, 5, :yellow)]
@@ -280,8 +280,30 @@ defmodule Remybun.Engine.RoundTest do
   end
 
   describe "scoring" do
+    test "laid 1s are worth 25 at the end even in a run, and a joker counts as its tile" do
+      meld = %Meld{
+        id: 1,
+        owner: 0,
+        type: :run,
+        color: :red,
+        start: 1,
+        cards: [c(1, 1, :red), j(104), c(3, 3, :red)]
+      }
+
+      r = %{
+        round_with(%{0 => [c(9, 9, :black)], 1 => []}, opened: %{0 => true, 1 => true})
+        | melds: [meld],
+          laid_by: %{1 => 0, 104 => 0, 3 => 0}
+      }
+
+      {:ok, r, _} = Round.play(r, 0, {:discard, 9})
+      # 1 (25) + joker as 2 (5) + 3 (5), plus 50 for closing
+      assert r.result.breakdown[0].laid == 35
+      assert r.result.scores[0] == 85
+    end
+
     test "laid tiles minus hand, closing and atu bonuses" do
-      # Seat 0 laid 10-11-12 red (33) and closes; seat 1 laid three 5s (15) and holds a 1 (25)
+      # Seat 0 laid 10-11-12 red (30) and closes; seat 1 laid three 5s (15) and holds a 1 (25)
       # and a joker (50), and was dealt the atu's twin.
       {run, set} = opening_tiles()
       m0 = %Meld{id: 1, owner: 0, type: :run, color: :red, start: 10, cards: run}
@@ -296,7 +318,7 @@ defmodule Remybun.Engine.RoundTest do
 
       {:ok, r, _} = Round.play(r, 0, {:discard, 7})
       assert r.result.winner == 0
-      assert r.result.scores == %{0 => 33 + 50, 1 => 15 - 75 + 50}
+      assert r.result.scores == %{0 => 30 + 50, 1 => 15 - 75 + 50}
 
       assert r.result.breakdown[1] ==
                %{laid: 15, hand: 75, closing: 0, atu: 50, multiplier: 1, total: -10}
@@ -322,8 +344,8 @@ defmodule Remybun.Engine.RoundTest do
 
       {:ok, r, _} = Round.play(r, 0, {:add_to_meld, 1, [9]})
       {:ok, r, _} = Round.play(r, 0, {:discard, 10})
-      assert r.result.breakdown[1].laid == 6 + 7 + 8
-      assert r.result.breakdown[0].laid == 9
+      assert r.result.breakdown[1].laid == 5 + 5 + 5
+      assert r.result.breakdown[0].laid == 5
     end
 
     test "closing with a joker doubles the closer; a 1/joker atu doubles everyone" do

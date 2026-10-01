@@ -25,10 +25,10 @@ defmodule Remybun.Engine.MeldTest do
       assert {:ok, %Meld{type: :set, rank: 9} = m} =
                Meld.build([c(9, :red), j(), c(9, :black)], 1)
 
-      assert Meld.points(m) == 27
+      assert Meld.points(m) == 3 * 5
     end
 
-    test "1s in a set are worth 25" do
+    test "1s in a set are worth 25 each" do
       {:ok, m} = Meld.build([c(1, :red), c(1, :blue), c(1, :black)], 1)
       assert Meld.points(m) == 75
     end
@@ -48,16 +48,16 @@ defmodule Remybun.Engine.MeldTest do
       assert {:error, _} = Meld.build([c(4, :red), c(5, :red), c(7, :red)], 1)
     end
 
-    test "1 before 2 or after 13 (worth 25), no wrap-around" do
+    test "1 before 2 (worth 5) or after 13 (worth 10), no wrap-around" do
       assert {:ok, %Meld{start: 1} = low} =
                Meld.build([c(1, :black), c(2, :black), c(3, :black)], 1)
 
-      assert Meld.points(low) == 6
+      assert Meld.points(low) == 5 + 5 + 5
 
       assert {:ok, %Meld{start: 12} = high} =
                Meld.build([c(12, :black), c(13, :black), c(1, :black)], 1)
 
-      assert Meld.points(high) == 12 + 13 + 25
+      assert Meld.points(high) == 10 + 10 + 10
 
       assert {:error, _} = Meld.build([c(13, :black), c(1, :black), c(2, :black)], 1)
     end
@@ -70,7 +70,7 @@ defmodule Remybun.Engine.MeldTest do
     test "free joker extends high when possible" do
       assert {:ok, %Meld{start: 5} = m} = Meld.build([c(5, :red), c(6, :red), j()], 1)
       assert Card.joker?(List.last(m.cards))
-      assert Meld.points(m) == 18
+      assert Meld.points(m) == 5 + 5 + 5
     end
 
     test "free joker extends low after a high ace" do

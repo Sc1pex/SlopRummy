@@ -91,20 +91,31 @@ defmodule Remybun.Engine.Meld do
     card.rank == meld.rank and card.color not in Enum.map(meld.cards, & &1.color)
   end
 
-  @doc "Point value of the meld (jokers count as the tile they stand for)."
-  def points(%__MODULE__{} = meld),
-    do: meld |> tile_values() |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+  @doc """
+  Opening value of the meld (see `Card.position_value/1`; a set of 1s is 25 each).
+  Jokers count as the tile they stand for.
+  """
+  def points(%__MODULE__{type: :run, start: start, cards: cards}) do
+    start..(start + length(cards) - 1)//1 |> Enum.map(&Card.position_value/1) |> Enum.sum()
+  end
 
-  @doc "Each tile with the value of its position in the meld."
+  def points(%__MODULE__{type: :set, rank: 1, cards: cards}), do: 25 * length(cards)
+
+  def points(%__MODULE__{type: :set, rank: rank, cards: cards}),
+    do: Card.rank_value(rank) * length(cards)
+
+  @doc """
+  End-of-round value of each tile in the meld (`Card.rank_value/1` of the number it shows
+  or, for a joker, the number it stands for).
+  """
   def tile_values(%__MODULE__{type: :run, start: start, cards: cards}) do
     cards
     |> Enum.with_index(start)
-    |> Enum.map(fn {card, pos} -> {card, Card.position_value(pos)} end)
+    |> Enum.map(fn {card, pos} -> {card, Card.rank_value(rank_at(pos))} end)
   end
 
   def tile_values(%__MODULE__{type: :set, rank: rank, cards: cards}) do
-    value = Card.position_value(if rank == 1, do: 14, else: rank)
-    Enum.map(cards, &{&1, value})
+    Enum.map(cards, &{&1, Card.rank_value(rank)})
   end
 
   @doc "JSON-friendly map. Jokers include an `as` key describing what they stand for."

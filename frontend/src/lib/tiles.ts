@@ -26,11 +26,13 @@ export function sortByNumber(tiles: Tile[]): Tile[] {
 }
 
 /**
- * Value of a meld position for the opening total. Mirrors the server:
- * positions go 1..14, where 14 is a 1 placed after 13 (worth 25). Others are worth their number.
+ * Value of a run position for the opening total. Mirrors the server: positions go 1..14;
+ * a 1 before 2 is 5, a 1 after 13 is 10, 2–9 are 5 and 10–13 are 10. (A set of 1s is 25 each.)
  */
 export function positionValue(pos: number): number {
-  return pos === 14 ? 25 : pos
+  if (pos === 1) return 5
+  if (pos === 14) return 10
+  return pos >= 10 ? 10 : 5
 }
 
 /**
@@ -52,7 +54,7 @@ function setPoints(tiles: Tile[], maxJokers: number): number | null {
   const rank = reals[0].rank
   if (reals.some((t) => t.rank !== rank)) return null
   if (new Set(reals.map((t) => t.color)).size !== reals.length) return null
-  return tiles.length * positionValue(rank === 1 ? 14 : rank)
+  return tiles.length * (rank === 1 ? 25 : positionValue(rank))
 }
 
 function runPoints(tiles: Tile[], maxJokers: number): number | null {
