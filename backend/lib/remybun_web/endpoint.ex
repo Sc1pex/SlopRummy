@@ -34,6 +34,8 @@ defmodule RemybunWeb.Endpoint do
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :remybun
   end
 
+  plug CORSPlug, origin: &RemybunWeb.Endpoint.cors_origins/0
+
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
@@ -46,4 +48,6 @@ defmodule RemybunWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
   plug RemybunWeb.Router
+
+  def cors_origins, do: Application.get_env(:remybun, :cors_origins, ["http://localhost:5173"])
 end

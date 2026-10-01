@@ -18,4 +18,9 @@ defmodule RemybunWeb.ErrorJSON do
   def render(template, _assigns) do
     %{errors: %{detail: Phoenix.Controller.status_message_from_template(template)}}
   end
+
+  @doc "Turns an internal error reason into a string for API and channel replies."
+  def reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  def reason({tag, detail}) when is_atom(tag), do: "#{tag}:#{detail}"
+  def reason(_), do: "error"
 end
