@@ -19,6 +19,10 @@
   <dd>{rules.max_players}</dd>
   <dt>{t('rules.closing_bonus')}</dt>
   <dd>+{rules.closing_bonus}</dd>
+  <dt>{t('rules.closed_on_board_bonus')}</dt>
+  <dd>+{rules.closed_on_board_bonus}</dd>
+  <dt>{t('rules.closed_on_board_add_hand')}</dt>
+  <dd>{rules.closed_on_board_add_hand ? t('rules.yes') : t('rules.no')}</dd>
   <dt>{t('rules.not_opened_penalty')}</dt>
   <dd>−{rules.not_opened_penalty}</dd>
   <dt>{t('rules.turn_timer')}</dt>

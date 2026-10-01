@@ -40,6 +40,7 @@ export interface ScoreBreakdown {
   laid: number
   hand: number
   opened: boolean
+  closed_on_board: boolean
   closing: number
   atu: number
   multiplier: number
@@ -49,6 +50,7 @@ export interface ScoreBreakdown {
 export interface RoundResult {
   winner: number | null
   double_close: boolean
+  closed_on_board: boolean
   atu_multiplier: number
   scores: Record<string, number>
   breakdown: Record<string, ScoreBreakdown>
@@ -132,6 +134,8 @@ export interface Rules {
   joker_swap: boolean
   not_opened_penalty: number
   closing_bonus: number
+  closed_on_board_bonus: number
+  closed_on_board_add_hand: boolean
   match: MatchFormat
   turn_timer_ms: number | null
 }

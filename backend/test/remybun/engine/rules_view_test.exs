@@ -9,11 +9,14 @@ defmodule Remybun.Engine.RulesViewTest do
                Rules.build("classic", %{
                  "opening_min_points" => 51,
                  "joker_swap" => false,
-                 "not_opened_penalty" => 150
+                 "not_opened_penalty" => 150,
+                 "closed_on_board_bonus" => 250,
+                 "closed_on_board_add_hand" => true
                })
 
       assert r.opening_min_points == 51 and r.joker_swap == false
       assert r.not_opened_penalty == 150
+      assert r.closed_on_board_bonus == 250 and r.closed_on_board_add_hand
 
       assert {:ok, %Rules{match: :single}} =
                Rules.build("classic", %{"match" => %{"type" => "single"}})

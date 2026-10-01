@@ -18,6 +18,8 @@
   let maxPlayers = $state(initial.max_players)
   let notOpened = $state(initial.not_opened_penalty)
   let closingBonus = $state(initial.closing_bonus)
+  let onBoardBonus = $state(initial.closed_on_board_bonus)
+  let onBoardAddHand = $state(initial.closed_on_board_add_hand)
   let timer = $state(initial.turn_timer_ms === null ? 0 : initial.turn_timer_ms / 1000)
   let matchType = $state(initial.match.type)
   let matchN = $state('n' in initial.match ? initial.match.n : 4)
@@ -29,6 +31,8 @@
       max_players: Number(maxPlayers),
       not_opened_penalty: Number(notOpened),
       closing_bonus: Number(closingBonus),
+      closed_on_board_bonus: Number(onBoardBonus),
+      closed_on_board_add_hand: onBoardAddHand,
       turn_timer_ms: Number(timer) === 0 ? null : Number(timer) * 1000,
       match: matchType === 'single' ? { type: 'single' } : { type: matchType, n: Number(matchN) },
     })
@@ -56,6 +60,14 @@
   <label>
     <span>{t('rules.closing_bonus')}</span>
     <input class="input" type="number" min="0" max="1000" step="10" bind:value={closingBonus} />
+  </label>
+  <label>
+    <span>{t('rules.closed_on_board_bonus')}</span>
+    <input class="input" type="number" min="0" max="2000" step="10" bind:value={onBoardBonus} />
+  </label>
+  <label class="check">
+    <input type="checkbox" bind:checked={onBoardAddHand} />
+    <span>{t('rules.closed_on_board_add_hand')}</span>
   </label>
   <label>
     <span>{t('rules.not_opened_penalty')}</span>
@@ -92,6 +104,19 @@
     flex-direction: column;
     gap: 4px;
     font-size: 0.9rem;
+  }
+
+  .check {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+  }
+
+  .check input {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
   }
 
   .pair {

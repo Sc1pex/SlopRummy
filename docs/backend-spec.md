@@ -19,6 +19,8 @@ Online platform for playing **Remi etalat** (Romanian rummy with tiles on racks)
 | `max_jokers_per_meld` | 2 | 1 or 2 |
 | `joker_swap` | true | Opened players may swap a joker out of a meld for the tile it stands for |
 | `closing_bonus` | 50 | Points for the player who closes |
+| `closed_on_board_bonus` | 200 | "Închis pe tablă": opening and closing on the same turn scores this instead of the closing bonus and the laid tiles |
+| `closed_on_board_add_hand` | false | Also add the value of the laid tiles to the închis-pe-tablă bonus |
 | `not_opened_penalty` | 100 | Points a player who never opened loses at the end of the round (instead of counting their hand) |
 | `match` | `{:rounds, 4}` | `{:rounds, n}`, `{:points_limit, n}` or `:single` |
 | `turn_timer_ms` | 60_000 | Per-turn limit; `nil` = off |
@@ -61,6 +63,8 @@ Rules snapshots are stored with every game; keys that are no longer settings are
   replaces only for the opening check)
   + `closing_bonus` for closing + 50 atu bonus. A player who never opened loses `not_opened_penalty` instead of
   counting their hand.
+  A player who opens and closes on the same turn ("închis pe tablă") scores `closed_on_board_bonus`
+  (+ the laid tiles if `closed_on_board_add_hand`) instead of the closing bonus and the laid tiles.
   Then closing with a joker or a 1 doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out, the round ends without a closing bonus.
 

@@ -53,6 +53,10 @@ defmodule Remybun.Engine.Round do
   with a joker or a 1 doubles the closer's score and a 1/joker atu doubles everyone's.
   If the stock runs out the round ends and nobody gets the closing bonus.
 
+  **Închis pe tablă**: a player who opens and closes on the same turn gets
+  `closed_on_board_bonus` instead of the closing bonus and the value of the tiles they laid
+  (which is added too when `closed_on_board_add_hand` is set). Atu and multipliers still apply.
+
   Every action returns `{:ok, round, events}` or `{:error, reason}`. Events are
   JSON-friendly maps that are safe to show to every player.
   """
@@ -606,6 +610,9 @@ defmodule Remybun.Engine.Round do
   end
 
   defp finish(r, closer, double_close) do
+    # Opened and closed on the same turn.
+    on_board? = closer != nil and r.turn.opened_now
+
     laid =
       for meld <- r.melds,
           {card, value} <- Meld.tile_values(meld, Rules.joker_penalty(), r.reused_jokers),
@@ -624,7 +631,23 @@ defmodule Remybun.Engine.Round do
               r.hands[seat] |> Enum.map(&Card.hand_value(&1, Rules.joker_penalty())) |> Enum.sum(),
             else: r.rules.not_opened_penalty
 
-        closing = if seat == closer, do: r.rules.closing_bonus, else: 0
+        on_board = on_board? and seat == closer
+
+        {laid_points, closing} =
+          cond do
+            on_board and r.rules.closed_on_board_add_hand ->
+              {laid_points, r.rules.closed_on_board_bonus}
+
+            on_board ->
+              {0, r.rules.closed_on_board_bonus}
+
+            seat == closer ->
+              {laid_points, r.rules.closing_bonus}
+
+            true ->
+              {laid_points, 0}
+          end
+
         atu = if seat in r.atu_announced, do: Rules.atu_bonus(), else: 0
         sum = laid_points - hand_points + closing + atu
         multiplier = r.multiplier * if(seat == closer and double_close, do: 2, else: 1)
@@ -634,6 +657,7 @@ defmodule Remybun.Engine.Round do
            laid: laid_points,
            hand: hand_points,
            opened: r.opened[seat],
+           closed_on_board: on_board,
            closing: closing,
            atu: atu,
            multiplier: multiplier,
@@ -644,6 +668,7 @@ defmodule Remybun.Engine.Round do
     result = %{
       winner: closer,
       double_close: double_close,
+      closed_on_board: on_board?,
       atu_multiplier: r.multiplier,
       scores: Map.new(breakdown, fn {seat, b} -> {seat, b.total} end),
       breakdown: breakdown,

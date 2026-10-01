@@ -483,7 +483,16 @@ defmodule Remybun.Engine.RoundTest do
       assert r.result.scores == %{0 => 30 + 50, 1 => 15 - 75 + 50}
 
       assert r.result.breakdown[1] ==
-               %{laid: 15, hand: 75, opened: true, closing: 0, atu: 50, multiplier: 1, total: -10}
+               %{
+                 laid: 15,
+                 hand: 75,
+                 opened: true,
+                 closed_on_board: false,
+                 closing: 0,
+                 atu: 50,
+                 multiplier: 1,
+                 total: -10
+               }
 
       # The atu bonus needs the announcement.
       r = %{r | atu_announced: []}
@@ -521,6 +530,33 @@ defmodule Remybun.Engine.RoundTest do
       {:ok, r, _} = Round.play(r, 0, {:discard, 1})
       assert r.result.double_close
       assert r.result.scores[0] == 100
+    end
+
+    test "închis pe tablă: opening and closing on the same turn" do
+      {run, set} = opening_tiles()
+      hands = %{0 => run ++ set ++ [j(104)], 1 => [c(9, 9, :red)]}
+      r = round_with(hands)
+
+      {:ok, r1, _} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
+      {:ok, done, _} = Round.play(r1, 0, {:discard, 104})
+      assert done.result.closed_on_board
+      # The bonus replaces the closing bonus and the laid tiles; closing with a joker doubles it.
+      assert done.result.scores[0] == 200 * 2
+
+      r1 = %{r1 | rules: %{r1.rules | closed_on_board_add_hand: true, closed_on_board_bonus: 300}}
+      {:ok, done, _} = Round.play(r1, 0, {:discard, 104})
+      assert done.result.scores[0] == (300 + 30 + 15) * 2
+    end
+
+    test "closing on a later turn is a normal close" do
+      {run, set} = opening_tiles()
+      r = round_with(%{0 => run ++ set ++ [c(9, 4, :blue)], 1 => [c(10, 9, :red)]})
+      {:ok, r, _} = Round.play(r, 0, {:lay_down, [ids(run), ids(set)]})
+      # A later turn: no longer the opening turn.
+      r = %{r | turn: %{r.turn | opened_now: false}}
+      {:ok, r, _} = Round.play(r, 0, {:discard, 9})
+      refute r.result.closed_on_board
+      assert r.result.scores[0] == 30 + 15 + 50
     end
 
     test "the closing bonus is a setting" do

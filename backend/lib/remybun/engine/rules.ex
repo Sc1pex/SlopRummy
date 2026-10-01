@@ -17,6 +17,8 @@ defmodule Remybun.Engine.Rules do
             joker_swap: true,
             not_opened_penalty: 100,
             closing_bonus: 50,
+            closed_on_board_bonus: 200,
+            closed_on_board_add_hand: false,
             match: {:rounds, 4},
             turn_timer_ms: 60_000
 
@@ -82,13 +84,16 @@ defmodule Remybun.Engine.Rules do
     end)
   end
 
-  @int_fields ~w(min_players max_players opening_min_points max_jokers_per_meld not_opened_penalty closing_bonus)
-  @fields @int_fields ++ ~w(joker_swap turn_timer_ms match)
+  @int_fields ~w(min_players max_players opening_min_points max_jokers_per_meld not_opened_penalty closing_bonus closed_on_board_bonus)
+  @bool_fields ~w(joker_swap closed_on_board_add_hand)
+  @fields @int_fields ++ @bool_fields ++ ~w(turn_timer_ms match)
 
   defp cast(key, v) when key in @int_fields and is_integer(v) and v >= 0,
     do: {:ok, String.to_existing_atom(key), v}
 
-  defp cast("joker_swap", v) when is_boolean(v), do: {:ok, :joker_swap, v}
+  defp cast(key, v) when key in @bool_fields and is_boolean(v),
+    do: {:ok, String.to_existing_atom(key), v}
+
   defp cast("turn_timer_ms", nil), do: {:ok, :turn_timer_ms, nil}
 
   defp cast("turn_timer_ms", v) when is_integer(v) and v >= 5_000 and v <= 600_000,
