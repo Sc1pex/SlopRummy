@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Meld } from '../../lib/types'
   import { receive, send } from '../../lib/transitions'
-  import PlayingCard from '../PlayingCard.svelte'
+  import Tile from '../Tile.svelte'
 
   interface Props {
     meld: Meld
@@ -15,7 +15,7 @@
 <button class="meld" class:targetable disabled={!targetable} onclick={() => ontap(meld)} aria-label="meld {meld.id}">
   {#each meld.cards as card (card.id)}
     <div class="slot" in:receive={{ key: card.id }} out:send={{ key: card.id }}>
-      <PlayingCard {card} />
+      <Tile tile={card} />
     </div>
   {/each}
 </button>
@@ -23,7 +23,8 @@
 <style>
   .meld {
     display: flex;
-    padding: 4px 6px 4px 4px;
+    gap: 1px;
+    padding: 3px;
     border: 2px solid transparent;
     border-radius: 10px;
     background: rgb(0 0 0 / 0.14);
@@ -31,10 +32,6 @@
 
   .meld:disabled {
     cursor: default;
-  }
-
-  .slot + .slot {
-    margin-left: calc(var(--card-h) * -0.42);
   }
 
   .targetable {

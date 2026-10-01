@@ -1,23 +1,23 @@
 // Shapes of the data sent by the backend (see docs/backend-spec.md).
 // Maps keyed by seat arrive with string keys ("0", "1", ...).
 
-export type Suit = 'clubs' | 'diamonds' | 'hearts' | 'spades'
+export type TileColor = 'black' | 'yellow' | 'red' | 'blue'
 
-export interface RegularCard {
+export interface NumberTile {
   id: number
-  rank: number // 1 = Ace ... 13 = King
-  suit: Suit
+  rank: number // 1..13
+  color: TileColor
   joker: false
 }
 
-export interface JokerCard {
+export interface JokerTile {
   id: number
   joker: true
   /** Only on jokers inside a meld: what the joker stands for. */
-  as?: { rank: number; suit?: Suit }
+  as?: { rank: number; color?: TileColor }
 }
 
-export type Card = RegularCard | JokerCard
+export type Tile = NumberTile | JokerTile
 
 export interface User {
   id: number
@@ -31,8 +31,8 @@ export interface Meld {
   owner: number
   type: 'set' | 'run'
   rank: number | null
-  suit: Suit | null
-  cards: Card[]
+  color: TileColor | null
+  cards: Tile[]
   points: number
 }
 
@@ -40,7 +40,7 @@ export interface RoundResult {
   winner: number | null
   joker_close: boolean
   scores: Record<string, number>
-  hands: Record<string, Card[]>
+  hands: Record<string, Tile[]>
 }
 
 export interface RoundView {
@@ -48,12 +48,12 @@ export interface RoundView {
   current: number
   starting_seat: number
   stock_count: number
-  discard_top: Card | null
+  discard_top: Tile | null
   discard_count: number
   melds: Meld[]
   opened: Record<string, boolean>
   hand_counts: Record<string, number>
-  hand: Card[] | null
+  hand: Tile[] | null
   must_use: { taken_discard: number | null; pending_joker: number | null } | null
   result: RoundResult | null
 }
@@ -126,7 +126,7 @@ export interface TableState {
 export interface GameEvent {
   type: string
   seat?: number
-  card?: Card
+  card?: Tile
   [key: string]: unknown
 }
 
