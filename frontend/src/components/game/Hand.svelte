@@ -21,6 +21,9 @@
     cards.length <= 1 ? cardWidth : Math.min(cardWidth * 0.95, (width - cardWidth) / (cards.length - 1)),
   )
 
+  // Center the hand when it doesn't need the full width.
+  const offset = $derived(Math.max(0, (width - (cardWidth + step * Math.max(0, cards.length - 1))) / 2))
+
   // Tap toggles selection; dragging sideways reorders.
   let drag = $state<{ id: number; pointerId: number; startX: number; dx: number; active: boolean } | null>(null)
 
@@ -64,7 +67,7 @@
       role="button"
       tabindex="0"
       aria-pressed={selected.includes(card.id)}
-      style:left="{i * step}px"
+      style:left="{offset + i * step}px"
       style:transform={dragging ? `translateX(${drag!.dx}px)` : undefined}
       style:z-index={dragging ? 100 : i}
       onpointerdown={(e) => pointerdown(e, card.id)}
